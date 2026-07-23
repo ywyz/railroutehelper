@@ -1,0 +1,7 @@
+namespace RailRouteHelper.Protocol;
+
+public static class ProtocolVersions
+{
+    public const int Current = 1;
+}
+

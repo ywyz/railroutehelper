@@ -15,3 +15,15 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 [合规门禁](docs/compliance.md)。
 
 本项目是非官方社区工具，与 Bitrich.info 或 Valve 无隶属、背书或合作关系。
+
+## 开发
+
+需要 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
+
+```shell
+dotnet restore --locked-mode
+dotnet test RailRouteHelper.sln --no-restore
+```
+
+协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
+[architecture.md](docs/architecture.md)。
