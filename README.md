@@ -8,9 +8,11 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 - Windows 与 Linux 共用的 .NET 核心；
 - 版本化实时协议；
 - 能保留任意 MessagePack 键类型的只读 `.mp.lz4` 存档 Adapter；
+- 按已验证游戏版本识别列车、轨道、车站和进路开通证据的 schema mapper；
 - 使用合成测试数据的协议回放。
 
-当前正在建立按游戏版本选择的存档 schema mapper。详细完成度和证据边界见
+schema mapper 当前覆盖有本地真实语料的 `2.3.17`—`2.3.24` 版本子集，详细
+版本表见 [schema-mapping.md](docs/schema-mapping.md)，完成度和证据边界见
 [项目进度](docs/progress.md)。
 
 本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。向游戏

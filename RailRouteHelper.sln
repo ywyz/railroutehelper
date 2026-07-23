@@ -16,6 +16,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Replay", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Replay.Tests", "tests\RailRouteHelper.Replay.Tests\RailRouteHelper.Replay.Tests.csproj", "{16D5F38B-F6EA-498A-8368-A8B50B45BD15}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.SaveSchema", "src\RailRouteHelper.SaveSchema\RailRouteHelper.SaveSchema.csproj", "{C68E11F2-D06A-4E2D-8C67-0A5F4C2D9822}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.SaveSchema.Tests", "tests\RailRouteHelper.SaveSchema.Tests\RailRouteHelper.SaveSchema.Tests.csproj", "{2C7452D7-1178-4AC4-A59C-4C1FCB94A96C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,6 +54,13 @@ Global
 		{16D5F38B-F6EA-498A-8368-A8B50B45BD15}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{16D5F38B-F6EA-498A-8368-A8B50B45BD15}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{16D5F38B-F6EA-498A-8368-A8B50B45BD15}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C68E11F2-D06A-4E2D-8C67-0A5F4C2D9822}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C68E11F2-D06A-4E2D-8C67-0A5F4C2D9822}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C68E11F2-D06A-4E2D-8C67-0A5F4C2D9822}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C68E11F2-D06A-4E2D-8C67-0A5F4C2D9822}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2C7452D7-1178-4AC4-A59C-4C1FCB94A96C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2C7452D7-1178-4AC4-A59C-4C1FCB94A96C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2C7452D7-1178-4AC4-A59C-4C1FCB94A96C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2C7452D7-1178-4AC4-A59C-4C1FCB94A96C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
-

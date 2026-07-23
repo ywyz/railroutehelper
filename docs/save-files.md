@@ -51,7 +51,8 @@ var value = root["knownStringKey"];
 
 mapper 必须显式登记支持的版本。遇到未登记版本时应拒绝映射并报告版本，不得以
 “最接近版本”猜测字段。支持范围和验证状态记录在
-[progress.md](progress.md)。
+[progress.md](progress.md)，字段表见
+[schema-mapping.md](schema-mapping.md)。
 
 节点的 `allocationState` 可以作为进路开通的证据，但目前没有已确认字段能够区分
 玩家手动开通与自动开通。mapper 应保留原始码值并将来源标为未知，直至受控存档

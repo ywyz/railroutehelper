@@ -15,7 +15,7 @@ explicitly uncertain.
 | Network node | A named element in the game's rail graph, such as a track, signal, switch, or autoblock. |
 | Track segment | A network node that trains can occupy and that connects two endpoint nodes. |
 | Station | A named operational location with a stable save identifier and grid position. |
-| Train | A current, non-disposed train with an identifier, reporting number, speed, occupied nodes, and direction target. |
+| Train | A current train with `disposed=false` and `initialized=true`, plus an identifier, reporting number, speed, occupied nodes, and direction target. |
 | Train occupancy | The ordered network-node references currently occupied by a train. |
 | Route clearance | Track or network-node capacity allocated ahead of, or occupied by, a train. The exact meaning of each raw allocation code must be evidence-backed. |
 | Manual route clearance | A route clearance known to have been established by the player. This is the user's “交路” in this project; it does **not** mean a timetable service or rolling-stock circulation. |
