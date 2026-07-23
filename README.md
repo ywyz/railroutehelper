@@ -10,6 +10,9 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 - 能保留任意 MessagePack 键类型的只读 `.mp.lz4` 存档 Adapter；
 - 使用合成测试数据的协议回放。
 
+当前正在建立按游戏版本选择的存档 schema mapper。详细完成度和证据边界见
+[项目进度](docs/progress.md)。
+
 本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。向游戏
 进程注入代码的实时插件不属于当前获准范围；其实现需要先满足
 [合规门禁](docs/compliance.md)。
@@ -27,4 +30,5 @@ dotnet test RailRouteHelper.sln --no-restore
 
 协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
 [architecture.md](docs/architecture.md)，存档格式与读取示例见
-[save-files.md](docs/save-files.md)，回放行为见 [replay.md](docs/replay.md)。
+[save-files.md](docs/save-files.md)，回放行为见 [replay.md](docs/replay.md)，
+领域术语见 [CONTEXT.md](CONTEXT.md)。

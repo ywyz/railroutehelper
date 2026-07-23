@@ -1,8 +1,8 @@
 .codebase-memory/
+graphify-out/
 .idea/
 .vscode/
 **/bin/
 **/obj/
 TestResults/
 artifacts/
-
