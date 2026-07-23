@@ -66,6 +66,7 @@ public sealed class SaveSchemaMapperRegistryTests
                 Assert.Equal(
                     ["Node:Track:A-B:0"],
                     clearance.ConnectedNodeIds);
+                Assert.Equal(RouteClearanceOrigin.Unknown, clearance.Origin);
             });
         Assert.Contains(
             result.Diagnostics,
@@ -120,6 +121,26 @@ public sealed class SaveSchemaMapperRegistryTests
     }
 
     [Fact]
+    public void Perpetual_auto_route_is_the_only_explicit_automatic_origin()
+    {
+        var result = SaveSchemaMapperRegistry.CreateDefault().Map(
+            CreateDocument("2.3.24", signalPerpetualAutoRoute: true));
+
+        var track = Assert.Single(
+            result.Snapshot.RouteClearances,
+            clearance => clearance.NodeId == "Node:Track:A-B:0");
+        Assert.Equal(RouteClearanceOrigin.Unknown, track.Origin);
+
+        var signal = Assert.Single(
+            result.Snapshot.RouteClearances,
+            clearance => clearance.NodeId == "Node:Semaphore:B");
+        Assert.Equal(RouteClearanceOrigin.Automatic, signal.Origin);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "route-clearance-origin-unknown");
+    }
+
+    [Fact]
     public void Unplaced_station_with_nil_grid_position_is_retained()
     {
         var result = SaveSchemaMapperRegistry.CreateDefault().Map(
@@ -146,7 +167,8 @@ public sealed class SaveSchemaMapperRegistryTests
         string version,
         int trackAllocationCode = 1,
         bool stationHasPosition = true,
-        long notMovingSinceTicks = 100_000)
+        long notMovingSinceTicks = 100_000,
+        bool signalPerpetualAutoRoute = false)
     {
         var station = Map(
             ("stationData", Map(
@@ -185,6 +207,8 @@ public sealed class SaveSchemaMapperRegistryTests
                 Map(
                     ("active", Boolean(true)),
                     ("allocationState", Unsigned(2)),
+                    ("PerpetualAutoRoute", Boolean(
+                        signalPerpetualAutoRoute)),
                     ("Connected", Array(
                         SaveNil.Instance,
                         Text("Node:Track:A-B:0")))))));

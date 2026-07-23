@@ -41,14 +41,16 @@ internal sealed class SaveSchemaMapperV2_3 : ISaveSchemaMapper
         var gameTimeTicks = MapGameTime(root);
 
         var diagnostics = new List<SaveMappingDiagnostic>();
-        if (routeClearances.Count > 0)
+        if (routeClearances.Any(
+                clearance => clearance.Origin is RouteClearanceOrigin.Unknown))
         {
             diagnostics.Add(
                 new SaveMappingDiagnostic(
                     "route-clearance-origin-unknown",
                     SaveMappingDiagnosticSeverity.Information,
-                    "Allocated nodes were found, but this schema does not "
-                    + "distinguish manual from automatic route clearance."));
+                    "Some allocated nodes have no explicit origin marker; "
+                    + "manual and sensor-triggered automatic route clearance "
+                    + "remain indistinguishable for those nodes."));
         }
 
         if (stationsWithoutPosition > 0)
@@ -262,7 +264,9 @@ internal sealed class SaveSchemaMapperV2_3 : ISaveSchemaMapper
                             internalState,
                             $"{internalStatePath}[1]"),
                         interpretation,
-                        RouteClearanceOrigin.Unknown));
+                        ReadRouteClearanceOrigin(
+                            internalState,
+                            $"{internalStatePath}[1]")));
             }
 
             if (!active
@@ -579,6 +583,25 @@ internal sealed class SaveSchemaMapperV2_3 : ISaveSchemaMapper
         }
 
         return connections;
+    }
+
+    private static RouteClearanceOrigin ReadRouteClearanceOrigin(
+        SaveMap internalState,
+        string path)
+    {
+        var value = SaveTreeReader.Optional(
+            internalState,
+            "PerpetualAutoRoute");
+        if (value is null)
+        {
+            return RouteClearanceOrigin.Unknown;
+        }
+
+        return SaveTreeReader.RequireBoolean(
+            value,
+            $"{path}.PerpetualAutoRoute")
+            ? RouteClearanceOrigin.Automatic
+            : RouteClearanceOrigin.Unknown;
     }
 
     private static ulong? MapGameTime(SaveMap root)
