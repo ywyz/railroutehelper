@@ -7,7 +7,7 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 
 - Windows 与 Linux 共用的 .NET 核心；
 - 版本化实时协议；
-- 只读存档 Adapter；
+- 能保留任意 MessagePack 键类型的只读 `.mp.lz4` 存档 Adapter；
 - 使用合成测试数据的协议回放。
 
 本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。向游戏
@@ -26,4 +26,5 @@ dotnet test RailRouteHelper.sln --no-restore
 ```
 
 协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
-[architecture.md](docs/architecture.md)。
+[architecture.md](docs/architecture.md)，存档格式与读取示例见
+[save-files.md](docs/save-files.md)。

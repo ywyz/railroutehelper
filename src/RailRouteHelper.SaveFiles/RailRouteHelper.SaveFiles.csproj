@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RailRouteHelper.SaveFiles</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="3.1.8" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RailRouteHelper.Core/RailRouteHelper.Core.csproj" />
+  </ItemGroup>
+</Project>
+
