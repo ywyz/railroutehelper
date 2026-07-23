@@ -258,6 +258,9 @@ internal sealed class SaveSchemaMapperV2_3 : ISaveSchemaMapper
                         friendlyName,
                         InferNodeKind(id),
                         allocationCode,
+                        ReadConnectedNodeIds(
+                            internalState,
+                            $"{internalStatePath}[1]"),
                         interpretation,
                         RouteClearanceOrigin.Unknown));
             }
@@ -546,6 +549,36 @@ internal sealed class SaveSchemaMapperV2_3 : ISaveSchemaMapper
         }
 
         return integers;
+    }
+
+    private static IReadOnlyList<string> ReadConnectedNodeIds(
+        SaveMap internalState,
+        string path)
+    {
+        var value = SaveTreeReader.Optional(internalState, "Connected");
+        if (value is null or SaveNil)
+        {
+            return [];
+        }
+
+        var savedConnections = SaveTreeReader.RequireArray(
+            value,
+            $"{path}.Connected");
+        var connections = new List<string>(savedConnections.Items.Count);
+        for (var index = 0; index < savedConnections.Items.Count; index++)
+        {
+            if (savedConnections.Items[index] is SaveNil)
+            {
+                continue;
+            }
+
+            connections.Add(
+                SaveTreeReader.RequireString(
+                    savedConnections.Items[index],
+                    $"{path}.Connected[{index}]"));
+        }
+
+        return connections;
     }
 
     private static ulong? MapGameTime(SaveMap root)

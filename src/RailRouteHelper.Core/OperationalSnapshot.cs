@@ -56,6 +56,7 @@ public sealed record RouteClearanceObservation(
     string FriendlyName,
     NetworkNodeKind NodeKind,
     int RawAllocationCode,
+    IReadOnlyList<string> ConnectedNodeIds,
     RouteClearanceInterpretation Interpretation,
     RouteClearanceOrigin Origin);
 

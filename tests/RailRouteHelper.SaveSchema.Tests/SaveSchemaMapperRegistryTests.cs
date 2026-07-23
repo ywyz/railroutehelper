@@ -53,6 +53,7 @@ public sealed class SaveSchemaMapperRegistryTests
                 Assert.Equal(
                     RouteClearanceInterpretation.Allocated,
                     clearance.Interpretation);
+                Assert.Empty(clearance.ConnectedNodeIds);
                 Assert.Equal(RouteClearanceOrigin.Unknown, clearance.Origin);
             },
             clearance =>
@@ -62,6 +63,9 @@ public sealed class SaveSchemaMapperRegistryTests
                     RouteClearanceInterpretation.TrainOccupied,
                     clearance.Interpretation);
                 Assert.Equal(NetworkNodeKind.Signal, clearance.NodeKind);
+                Assert.Equal(
+                    ["Node:Track:A-B:0"],
+                    clearance.ConnectedNodeIds);
             });
         Assert.Contains(
             result.Diagnostics,
@@ -180,7 +184,10 @@ public sealed class SaveSchemaMapperRegistryTests
                 1,
                 Map(
                     ("active", Boolean(true)),
-                    ("allocationState", Unsigned(2))))));
+                    ("allocationState", Unsigned(2)),
+                    ("Connected", Array(
+                        SaveNil.Instance,
+                        Text("Node:Track:A-B:0")))))));
         var activeTrain = Map(
             ("uuid", Text("train-active")),
             ("reportingNumber", Text("G100")),
