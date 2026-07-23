@@ -12,7 +12,7 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `protocolVersion` | integer | 当前固定为 `1`；未知版本必须拒绝，不能猜测解析。 |
-| `sequence` | integer | 数据源内的单调递增序号；回放层负责检查顺序。 |
+| `sequence` | integer | 数据源内的连续递增序号；回放层检查重复、乱序和缺号。 |
 | `capturedAtUtc` | RFC 3339 timestamp | 捕获时间，使用 UTC 偏移。 |
 | `messageType` | string | 消息类型；第一阶段定义 `snapshot`。 |
 | `payload` | JSON value | 由消息类型定义的负载。 |
@@ -22,6 +22,6 @@
 - 同一主版本可以增加 `payload` 字段，读取方应忽略不认识的负载字段。
 - 删除或改变已有字段语义、改变信封字段类型时必须提升协议版本。
 - 当前实现仅接受 v1，避免把未来消息静默解释为错误状态。
+- 一份记录的首个序号可以是任意值；之后每条消息必须严格等于前一条加一。
 - 协议层不绑定 TCP、WebSocket、命名管道或 Unix socket；传输由外层 Adapter
   决定。
-

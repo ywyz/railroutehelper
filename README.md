@@ -27,4 +27,4 @@ dotnet test RailRouteHelper.sln --no-restore
 
 协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
 [architecture.md](docs/architecture.md)，存档格式与读取示例见
-[save-files.md](docs/save-files.md)。
+[save-files.md](docs/save-files.md)，回放行为见 [replay.md](docs/replay.md)。
