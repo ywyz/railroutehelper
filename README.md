@@ -30,6 +30,20 @@ dotnet restore --locked-mode
 dotnet test RailRouteHelper.sln --no-restore
 ```
 
+## 本地代码图谱
+
+`graphify-out/` 是已忽略的本地产物，不提交到 Git。需要刷新带 LLM 语义关系的完整
+图谱时，使用系统环境中已有的 OpenAI-compatible 配置：
+
+```shell
+graphify extract . --backend openai --mode deep --force --max-concurrency 2
+graphify label . --backend=openai --max-concurrency=2
+```
+
+命令读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`，仓库内不得保存
+这些值。需要显式改用 DeepSeek 时，将 `--backend openai` 改为
+`--backend deepseek`；不要为同一次刷新同时调用两个后端。
+
 协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
 [architecture.md](docs/architecture.md)，存档格式与读取示例见
 [save-files.md](docs/save-files.md)，回放行为见 [replay.md](docs/replay.md)，
