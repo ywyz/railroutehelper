@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RailRouteHelper.Operations;
 using RailRouteHelper.Protocol;
 using RailRouteHelper.Replay;
 
@@ -79,6 +80,56 @@ public sealed class ProtocolReplayReaderTests
         Assert.IsType<JsonException>(error.InnerException);
     }
 
+    [Fact]
+    public async Task ReadOperationsReportsAsync_filters_mixed_protocol_messages()
+    {
+        var capturedAt = new DateTimeOffset(
+            2026,
+            7,
+            23,
+            13,
+            0,
+            0,
+            TimeSpan.Zero);
+        var diagnostic = RealtimeProtocolCodec.CreateEnvelope(
+            20,
+            capturedAt,
+            "save-monitor-diagnostic",
+            new { code = "synthetic" });
+        var first = CreateOperationsEnvelope(
+            21,
+            capturedAt.AddSeconds(1),
+            "automatic-1.mp.lz4",
+            RouteChangeKind.Established);
+        var second = CreateOperationsEnvelope(
+            22,
+            capturedAt.AddSeconds(2),
+            "automatic-2.mp.lz4",
+            RouteChangeKind.Retargeted);
+        var bytes = new[] { diagnostic, first, second }
+            .SelectMany(RealtimeProtocolCodec.EncodeLine)
+            .ToArray();
+        await using var stream = new MemoryStream(bytes);
+        var replayed = new List<OperationsReportReplayItem>();
+
+        await foreach (var item in new ProtocolReplayReader()
+                           .ReadOperationsReportsAsync(
+                               stream,
+                               TestContext.Current.CancellationToken))
+        {
+            replayed.Add(item);
+        }
+
+        Assert.Equal([21L, 22L], replayed.Select(item => item.Sequence));
+        Assert.Equal(
+            ["automatic-1.mp.lz4", "automatic-2.mp.lz4"],
+            replayed.Select(item => item.Payload.SourceSaveName));
+        Assert.Equal(
+            [RouteChangeKind.Established, RouteChangeKind.Retargeted],
+            replayed.Select(
+                item => Assert.Single(item.Payload.Report.RouteChanges).Kind));
+    }
+
     private static RealtimeEnvelope CreateEnvelope(int sequence) =>
         new(
             ProtocolVersion: ProtocolVersions.Current,
@@ -93,4 +144,29 @@ public sealed class ProtocolReplayReaderTests
                 TimeSpan.Zero),
             MessageType: "snapshot",
             Payload: JsonSerializer.SerializeToElement(new { sequence }));
+
+    private static RealtimeEnvelope CreateOperationsEnvelope(
+        long sequence,
+        DateTimeOffset capturedAtUtc,
+        string sourceSaveName,
+        RouteChangeKind kind) =>
+        OperationsReportProtocol.CreateEnvelope(
+            sequence,
+            capturedAtUtc,
+            sourceSaveName,
+            "rail-route-save/2.3-observed/v1",
+            "synthetic-network",
+            "2.3.24",
+            (ulong)(sequence * 100),
+            new OperationsReport(
+                [],
+                [
+                    new RouteChangeObservation(
+                        kind,
+                        "Node:Semaphore:auto-entry",
+                        [],
+                        ["Node:Track:auto-platform"],
+                        null,
+                        null),
+                ]));
 }

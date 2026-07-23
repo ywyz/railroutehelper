@@ -21,6 +21,9 @@ explicitly uncertain.
 | Manual route clearance | A route clearance known to have been established by the player. This is the user's “交路” in this project; it does **not** mean a timetable service or rolling-stock circulation. |
 | Route-clearance observation | Save evidence that a node has a non-zero allocation code. Its origin remains `Unknown` except where an explicit marker such as `PerpetualAutoRoute=true` proves automatic operation. |
 | Operations report | A conservative projection of one current snapshot and an optional previous snapshot into train reachability and route-change observations. |
+| Operations report message | A protocol-v1 envelope carrying an Operations report payload with its own payload version, source save name, schema, network identity, game version, and game time. |
+| Save monitor | A read-only directory observer that stabilizes, deduplicates, groups, orders, and compares save revisions before emitting protocol messages. |
+| Save monitor diagnostic | A versioned protocol message explaining why one save revision was skipped without exposing its absolute path or stopping other save streams. |
 | Train route reachability | Whether the next scheduled platform is in the train's uniquely selected, continuously allocated forward component: `Reachable`, `NotReachable`, or `Unknown`. |
 | Route change | A control node's target transition between two snapshots: established, retargeted, or released. |
 | Blocked train | A train that is stationary and cannot make forward progress. Zero speed alone is insufficient to establish this state. |
@@ -34,8 +37,10 @@ explicitly uncertain.
   evidence into an operational snapshot.
 - **Operations** reasons about reachability, approaching trains, and possible
   blockages from snapshots.
-- **Protocol and replay** transport or reproduce snapshots without depending on
-  the save format.
+- **Protocol and replay** transport or reproduce Operations reports without
+  depending on the save format.
+- **Monitoring** owns directory observation, file stabilization, per-network
+  ordering, previous-snapshot state, and conversion to protocol messages.
 
 ## Invariants
 
@@ -46,6 +51,8 @@ explicitly uncertain.
   is ambiguous.
 - Reading a save never writes to the save, the game directory, or the game
   process.
+- Snapshots with different topology-derived network identities are never
+  compared as one route-change sequence.
 
 ## Open domain questions
 

@@ -30,15 +30,6 @@
       "railroutehelper.core": {
         "type": "Project"
       },
-      "railroutehelper.monitoring": {
-        "type": "Project",
-        "dependencies": {
-          "RailRouteHelper.Operations": "[1.0.0, )",
-          "RailRouteHelper.Protocol": "[1.0.0, )",
-          "RailRouteHelper.SaveFiles": "[1.0.0, )",
-          "RailRouteHelper.SaveSchema": "[1.0.0, )"
-        }
-      },
       "railroutehelper.operations": {
         "type": "Project",
         "dependencies": {

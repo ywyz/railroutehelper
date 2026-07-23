@@ -149,10 +149,17 @@
       "railroutehelper.core": {
         "type": "Project"
       },
-      "railroutehelper.protocol": {
+      "railroutehelper.operations": {
         "type": "Project",
         "dependencies": {
           "RailRouteHelper.Core": "[1.0.0, )"
+        }
+      },
+      "railroutehelper.protocol": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )",
+          "RailRouteHelper.Operations": "[1.0.0, )"
         }
       },
       "railroutehelper.replay": {

@@ -87,3 +87,6 @@ dotnet run --project src/RailRouteHelper.Cli -- \
 
 测试只提交由代码构造的脱敏快照，不包含玩家原始存档或创意工坊内容。南通和太原
 受控存档仅用于本机只读验收。
+
+Operations 报告的连续协议、目录监听和 JSONL 记录见
+[monitoring.md](monitoring.md)。

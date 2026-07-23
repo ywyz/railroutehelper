@@ -5,6 +5,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../RailRouteHelper.Core/RailRouteHelper.Core.csproj" />
+    <ProjectReference Include="../RailRouteHelper.Operations/RailRouteHelper.Operations.csproj" />
   </ItemGroup>
 </Project>
-

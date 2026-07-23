@@ -7,6 +7,28 @@ namespace RailRouteHelper.Replay;
 
 public sealed class ProtocolReplayReader
 {
+    public async IAsyncEnumerable<OperationsReportReplayItem>
+        ReadOperationsReportsAsync(
+            Stream source,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var envelope in ReadAllAsync(source, cancellationToken))
+        {
+            if (!string.Equals(
+                    envelope.MessageType,
+                    OperationsReportProtocol.MessageType,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            yield return new OperationsReportReplayItem(
+                envelope.Sequence,
+                envelope.CapturedAtUtc,
+                OperationsReportProtocol.Decode(envelope));
+        }
+    }
+
     public async IAsyncEnumerable<RealtimeEnvelope> ReadAllAsync(
         Stream source,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -57,3 +79,8 @@ public sealed class ProtocolReplayReader
         }
     }
 }
+
+public sealed record OperationsReportReplayItem(
+    long Sequence,
+    DateTimeOffset CapturedAtUtc,
+    OperationsReportPayload Payload);

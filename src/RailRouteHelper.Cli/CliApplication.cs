@@ -1,4 +1,7 @@
+using System.Text;
+using RailRouteHelper.Monitoring;
 using RailRouteHelper.Operations;
+using RailRouteHelper.Protocol;
 using RailRouteHelper.SaveFiles;
 using RailRouteHelper.SaveSchema;
 
@@ -55,6 +58,18 @@ internal static class CliApplication
             return 0;
         }
 
+        if (arguments.Count >= 2
+            && arguments[0] == "watch-saves"
+            && TryParseWatchArguments(
+                arguments,
+                out var watchArguments))
+        {
+            return await WatchSavesAsync(
+                watchArguments,
+                output,
+                cancellationToken);
+        }
+
         error.WriteLine("error: invalid command or argument count.");
         WriteUsage(error);
         return 1;
@@ -69,6 +84,107 @@ internal static class CliApplication
             cancellationToken);
         var mapping = SaveSchemaMapperRegistry.CreateDefault().Map(document);
         return new LoadedSave(document, mapping);
+    }
+
+    private static async Task<int> WatchSavesAsync(
+        WatchArguments arguments,
+        TextWriter output,
+        CancellationToken cancellationToken)
+    {
+        var directoryPath = Path.GetFullPath(arguments.DirectoryPath);
+        if (!Directory.Exists(directoryPath))
+        {
+            throw new DirectoryNotFoundException(
+                $"The save directory does not exist: {directoryPath}");
+        }
+
+        await using var recording = arguments.RecordingPath is null
+            ? null
+            : new FileStream(
+                Path.GetFullPath(arguments.RecordingPath),
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var options = new SaveDirectoryWatchOptions
+        {
+            Follow = arguments.Follow,
+        };
+        await foreach (var envelope in new SaveDirectoryMonitor().WatchAsync(
+                           directoryPath,
+                           options,
+                           cancellationToken))
+        {
+            var line = RealtimeProtocolCodec.EncodeLine(envelope);
+            await output.WriteAsync(
+                Encoding.UTF8.GetString(line).AsMemory(),
+                cancellationToken);
+            await output.FlushAsync(cancellationToken);
+            if (recording is not null)
+            {
+                await recording.WriteAsync(line, cancellationToken);
+                await recording.FlushAsync(cancellationToken);
+            }
+        }
+
+        return 0;
+    }
+
+    private static bool TryParseWatchArguments(
+        IReadOnlyList<string> arguments,
+        out WatchArguments result)
+    {
+        var directoryPath = arguments[1];
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            result = default!;
+            return false;
+        }
+
+        string? recordingPath = null;
+        var follow = true;
+        var onceSeen = false;
+        for (var index = 2; index < arguments.Count; index++)
+        {
+            if (arguments[index] == "--once" && !onceSeen)
+            {
+                follow = false;
+                onceSeen = true;
+                continue;
+            }
+
+            if (arguments[index] == "--record"
+                && recordingPath is null
+                && index + 1 < arguments.Count)
+            {
+                recordingPath = arguments[++index];
+                if (string.IsNullOrWhiteSpace(recordingPath))
+                {
+                    result = default!;
+                    return false;
+                }
+
+                if (recordingPath.EndsWith(
+                        ".mp.lz4",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    result = default!;
+                    return false;
+                }
+
+                continue;
+            }
+
+            result = default!;
+            return false;
+        }
+
+        result = new WatchArguments(
+            directoryPath,
+            recordingPath,
+            follow);
+        return true;
     }
 
     private static void WriteHeader(
@@ -174,9 +290,17 @@ internal static class CliApplication
             "  railroutehelper analyze-save <save.mp.lz4>");
         writer.WriteLine(
             "  railroutehelper compare-saves <before.mp.lz4> <after.mp.lz4>");
+        writer.WriteLine(
+            "  railroutehelper watch-saves <directory> "
+            + "[--once] [--record <recording.jsonl>]");
     }
 
     private sealed record LoadedSave(
         SaveDocument Document,
         SaveMappingResult Mapping);
+
+    private sealed record WatchArguments(
+        string DirectoryPath,
+        string? RecordingPath,
+        bool Follow);
 }

@@ -1,11 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <RootNamespace>RailRouteHelper.Cli</RootNamespace>
+    <RootNamespace>RailRouteHelper.Monitoring</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../RailRouteHelper.Monitoring/RailRouteHelper.Monitoring.csproj" />
     <ProjectReference Include="../RailRouteHelper.Operations/RailRouteHelper.Operations.csproj" />
     <ProjectReference Include="../RailRouteHelper.Protocol/RailRouteHelper.Protocol.csproj" />
     <ProjectReference Include="../RailRouteHelper.SaveFiles/RailRouteHelper.SaveFiles.csproj" />

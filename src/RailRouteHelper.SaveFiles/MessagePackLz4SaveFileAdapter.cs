@@ -52,10 +52,20 @@ public sealed class MessagePackLz4SaveFileAdapter : ISaveFileAdapter
             stream,
             maximumSourceBytes,
             cancellationToken);
-        var root = MessagePackSerializer.Deserialize<SaveValue>(
-            encoded,
-            SerializerOptions,
-            cancellationToken);
+        SaveValue root;
+        try
+        {
+            root = MessagePackSerializer.Deserialize<SaveValue>(
+                encoded,
+                SerializerOptions,
+                cancellationToken);
+        }
+        catch (MessagePackSerializationException error)
+        {
+            throw new InvalidDataException(
+                "The save file is not a valid MessagePack/LZ4 container.",
+                error);
+        }
 
         return new SaveDocument(
             fullPath,

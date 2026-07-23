@@ -11,8 +11,10 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 - 按已验证游戏版本识别列车、轨道、车站和进路开通证据的 schema mapper；
 - 从快照推断列车当前/下一站、前向进路可达性、进路缺口和可能受阻状态；
 - 比较前后快照中的进路建立、改向和释放；
+- 以版本化 JSONL 连续记录并回放 Operations 报告；
+- 持续监听存档目录，自动稳定、去重、归组和排序新存档；
 - 使用合成测试数据的协议回放和受控场景回放；
-- `analyze-save` 与 `compare-saves` 命令行工具。
+- `analyze-save`、`compare-saves` 与 `watch-saves` 命令行工具。
 
 schema mapper 当前覆盖有本地真实语料的 `2.3.17`—`2.3.24` 版本子集，详细
 版本表见 [schema-mapping.md](docs/schema-mapping.md)，完成度和证据边界见
@@ -47,8 +49,17 @@ dotnet run --project src/RailRouteHelper.Cli -- \
   compare-saves "/path/to/before.mp.lz4" "/path/to/after.mp.lz4"
 ```
 
-CLI 只读取文件；不会移动、改名或写回存档。运行态状态、证据等级和限制见
-[operations.md](docs/operations.md)。
+持续监听并把 JSONL 同时写到标准输出和一个新记录文件：
+
+```shell
+dotnet run --project src/RailRouteHelper.Cli -- \
+  watch-saves "/path/to/saves" --record "run.jsonl"
+```
+
+使用 `--once` 只处理启动时已有的存档并退出。CLI 不会移动、改名或写回存档；
+只有显式 `--record` 指定的新文件会被创建，已有记录不会覆盖。运行态状态见
+[operations.md](docs/operations.md)，监听规则见
+[monitoring.md](docs/monitoring.md)。
 
 ## 本地代码图谱
 
@@ -66,5 +77,6 @@ graphify label . --backend=openai --max-concurrency=2
 
 协议说明见 [protocol-v1.md](docs/protocol-v1.md)，模块边界见
 [architecture.md](docs/architecture.md)，存档格式与读取示例见
-[save-files.md](docs/save-files.md)，回放行为见 [replay.md](docs/replay.md)，
+[save-files.md](docs/save-files.md)，监听行为见
+[monitoring.md](docs/monitoring.md)，回放行为见 [replay.md](docs/replay.md)，
 领域术语见 [CONTEXT.md](CONTEXT.md)。
