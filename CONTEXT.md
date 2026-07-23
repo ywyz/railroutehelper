@@ -19,8 +19,12 @@ explicitly uncertain.
 | Train occupancy | The ordered network-node references currently occupied by a train. |
 | Route clearance | Track or network-node capacity allocated ahead of, or occupied by, a train. The exact meaning of each raw allocation code must be evidence-backed. |
 | Manual route clearance | A route clearance known to have been established by the player. This is the user's “交路” in this project; it does **not** mean a timetable service or rolling-stock circulation. |
-| Route-clearance observation | Save evidence that a node has a non-zero allocation code. Its origin remains `Unknown` until the save format distinguishes manual from automatic clearance or a controlled comparison proves it. |
+| Route-clearance observation | Save evidence that a node has a non-zero allocation code. Its origin remains `Unknown` except where an explicit marker such as `PerpetualAutoRoute=true` proves automatic operation. |
+| Operations report | A conservative projection of one current snapshot and an optional previous snapshot into train reachability and route-change observations. |
+| Train route reachability | Whether the next scheduled platform is in the train's uniquely selected, continuously allocated forward component: `Reachable`, `NotReachable`, or `Unknown`. |
+| Route change | A control node's target transition between two snapshots: established, retargeted, or released. |
 | Blocked train | A train that is stationary and cannot make forward progress. Zero speed alone is insufficient to establish this state. |
+| Possibly blocked train | A train with observed stationary duration and an inferred forward route gap. This is a warning, not proof that the train cannot move for another reason. |
 
 ## Context boundaries
 
@@ -38,6 +42,8 @@ explicitly uncertain.
 - Unknown game versions are never silently treated as a known schema.
 - Raw allocation codes are retained even when their semantic label is inferred.
 - Manual and automatic route-clearance origins are not conflated.
+- A possible topology path is not treated as reachable when the selected branch
+  is ambiguous.
 - Reading a save never writes to the save, the game directory, or the game
   process.
 
@@ -47,7 +53,7 @@ explicitly uncertain.
   observed but rare `3`.
 - Find a reliable discriminator between player-established and
   automatically-established route clearance.
-- Define how adjacent allocated network nodes are grouped into one operational
-  route and where its forward limit lies.
-- Define blockage using elapsed game time, stop reason, direction, and reachable
-  cleared nodes rather than speed alone.
+- Validate the current forward-component grouping on complex junctions, loops,
+  and multiple simultaneous allocations.
+- Determine which stop-reason codes can safely refine the current conservative
+  possible-blockage rule.

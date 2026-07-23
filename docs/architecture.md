@@ -1,4 +1,4 @@
-# 第一阶段架构
+# 跨平台只读架构
 
 第一阶段以 .NET 8 类库实现，目标运行环境为 Windows x64 与 Linux x64。业务核心
 不使用平台专属 API；路径由调用方传入，不在核心代码中硬编码 Steam 或 Unity
@@ -10,11 +10,16 @@
                                v
 Save file -> ISaveFileAdapter -> SaveValue -> schema mapper -> Domain snapshot
                                                             |
-                                                            v
-                                                     Protocol -> Recording
-                                                                   |
-                                                                   v
-                                                             ReplayReader
+                         +-----------------------------------+------------------+
+                         |                                                      |
+                         v                                                      v
+                 OperationsAnalyzer                                      Protocol
+                         |                                                      |
+                         v                                                      v
+                    OperationsReport                                      Recording
+                         |                                                      |
+                         v                                                      v
+                       CLI                                                ReplayReader
 ```
 
 模块职责：
@@ -24,6 +29,10 @@ Save file -> ISaveFileAdapter -> SaveValue -> schema mapper -> Domain snapshot
 - `RailRouteHelper.SaveFiles`：只读打开 `.mp.lz4`，解压为无损 `SaveValue` 树。
 - `RailRouteHelper.SaveSchema`：按存档内嵌游戏版本选择字段 schema，并将
   `SaveValue` 映射为 `Core` 中的领域快照。
+- `RailRouteHelper.Operations`：从一个或两个快照推断列车前向可达性、当前/下一
+  站、进路缺口、可能受阻状态，以及进路建立、改向和释放事件。
+- `RailRouteHelper.Cli`：只读存档分析和前后存档比较的命令行 Adapter；不包含
+  拓扑或状态判断。
 - `RailRouteHelper.Replay`：从协议记录中按顺序产出消息。
 
 `SaveFiles` 不猜测某个游戏版本的字段语义。后续 schema mapper 将经过验证的字段
@@ -33,3 +42,4 @@ Save file -> ISaveFileAdapter -> SaveValue -> schema mapper -> Domain snapshot
 读取或回放模块的依赖，因此即使插件未获许可，独立存档分析器仍能工作。
 
 领域术语及尚未解决的语义边界见仓库根目录的 [CONTEXT.md](../CONTEXT.md)。
+运行态算法、状态和 CLI 用法见 [operations.md](operations.md)。

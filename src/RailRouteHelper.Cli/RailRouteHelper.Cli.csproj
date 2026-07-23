@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RailRouteHelper.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RailRouteHelper.Operations/RailRouteHelper.Operations.csproj" />
+    <ProjectReference Include="../RailRouteHelper.SaveFiles/RailRouteHelper.SaveFiles.csproj" />
+    <ProjectReference Include="../RailRouteHelper.SaveSchema/RailRouteHelper.SaveSchema.csproj" />
+  </ItemGroup>
+</Project>
