@@ -1,0 +1,8 @@
+.codebase-memory/
+.idea/
+.vscode/
+**/bin/
+**/obj/
+TestResults/
+artifacts/
+
