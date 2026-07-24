@@ -7,7 +7,7 @@ await foreach (var envelope in new SaveDirectoryMonitor().WatchAsync(
                    saveDirectory,
                    cancellationToken: cancellationToken))
 {
-    // 写入 JSONL、投影到界面或发送本地通知
+    // 写入 JSONL，或交给 LiveOperationsProjector
 }
 ```
 
@@ -70,3 +70,6 @@ schema、拓扑身份、游戏版本、游戏时间和完整 `OperationsReport`�
 监听器仍是独立、只读、非注入式工具。它不会修改、移动、删除存档，也不会读取
 游戏内存。刷新延迟由游戏生成存档的频率、文件稳定间隔和扫描周期共同决定，因此
 是基于存档的准实时，而不是逐帧实时。
+
+只绑定本机 loopback 的 Web Adapter、投影状态和告警规则见
+[live-operations.md](live-operations.md)。

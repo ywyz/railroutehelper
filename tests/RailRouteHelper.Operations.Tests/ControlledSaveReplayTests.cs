@@ -2,7 +2,7 @@ using RailRouteHelper.Core;
 
 namespace RailRouteHelper.Operations.Tests;
 
-public sealed class ControlledSaveReplayTests
+public sealed partial class ControlledSaveReplayTests
 {
     [Fact]
     public void Nantong_route_establishment_reaches_platform_2()

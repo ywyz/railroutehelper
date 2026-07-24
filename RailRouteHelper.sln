@@ -30,6 +30,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Monitoring"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Monitoring.Tests", "tests\RailRouteHelper.Monitoring.Tests\RailRouteHelper.Monitoring.Tests.csproj", "{0046B215-B57B-4970-95D0-9FB05B03658D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.LiveOperations", "src\RailRouteHelper.LiveOperations\RailRouteHelper.LiveOperations.csproj", "{F58197FC-DB83-4A3D-B3AA-BD2FA3F8D143}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Web", "src\RailRouteHelper.Web\RailRouteHelper.Web.csproj", "{0E4936E5-4FB3-4E4D-9DFB-580395588802}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Web.Tests", "tests\RailRouteHelper.Web.Tests\RailRouteHelper.Web.Tests.csproj", "{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -92,5 +98,17 @@ Global
 		{0046B215-B57B-4970-95D0-9FB05B03658D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0046B215-B57B-4970-95D0-9FB05B03658D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0046B215-B57B-4970-95D0-9FB05B03658D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F58197FC-DB83-4A3D-B3AA-BD2FA3F8D143}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F58197FC-DB83-4A3D-B3AA-BD2FA3F8D143}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F58197FC-DB83-4A3D-B3AA-BD2FA3F8D143}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F58197FC-DB83-4A3D-B3AA-BD2FA3F8D143}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0E4936E5-4FB3-4E4D-9DFB-580395588802}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0E4936E5-4FB3-4E4D-9DFB-580395588802}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0E4936E5-4FB3-4E4D-9DFB-580395588802}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0E4936E5-4FB3-4E4D-9DFB-580395588802}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

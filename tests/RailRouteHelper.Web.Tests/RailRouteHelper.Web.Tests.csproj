@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Exe</OutputType>
-    <RootNamespace>RailRouteHelper.Operations.Tests</RootNamespace>
+    <RootNamespace>RailRouteHelper.Web.Tests</RootNamespace>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
   <ItemGroup>
@@ -12,10 +12,10 @@
     <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/RailRouteHelper.Core/RailRouteHelper.Core.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../src/RailRouteHelper.LiveOperations/RailRouteHelper.LiveOperations.csproj" />
     <ProjectReference Include="../../src/RailRouteHelper.Operations/RailRouteHelper.Operations.csproj" />
     <ProjectReference Include="../../src/RailRouteHelper.Protocol/RailRouteHelper.Protocol.csproj" />
-    <ProjectReference Include="../../src/RailRouteHelper.Replay/RailRouteHelper.Replay.csproj" />
+    <ProjectReference Include="../../src/RailRouteHelper.Web/RailRouteHelper.Web.csproj" />
   </ItemGroup>
 </Project>

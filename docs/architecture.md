@@ -19,13 +19,13 @@ Save directory -> Monitoring -> Save Adapter -> schema mapper -> Domain snapshot
                                                               v
                                                        Protocol envelope
                                                               |
-                                                +-------------+-------------+
-                                                |                           |
-                                                v                           v
-                                           JSONL record                    CLI
-                                                |
-                                                v
-                                           ReplayReader
+                                  +------------+-------------+-------------+
+                                  |                          |             |
+                                  v                          v             v
+                             JSONL record                  CLI     LiveOperationsProjector
+                                  |                                      |
+                                  v                                      v
+                             ReplayReader                       localhost Web
 ```
 
 模块职责：
@@ -40,6 +40,10 @@ Save directory -> Monitoring -> Save Adapter -> schema mapper -> Domain snapshot
   站、进路缺口、可能受阻状态，以及进路建立、改向和释放事件。
 - `RailRouteHelper.Monitoring`：持续观察目录，等待文件稳定，对文件修订去重，以
   拓扑身份隔离地图，按游戏时间排序，并维护各地图的前一快照。
+- `RailRouteHelper.LiveOperations`：消费协议信封，按 `networkId` 投影最新运行图，
+  保留有界进路事件时间线，并维护疑似受阻告警的打开、持续、恢复和复发实例。
+- `RailRouteHelper.Web`：只绑定 loopback 的 ASP.NET Core Adapter；把 Monitoring
+  消息送入投影器，并通过 HTML 与 `/api/live` 暴露只读状态。
 - `RailRouteHelper.Cli`：只读存档分析、前后比较和连续监听的命令行 Adapter；
   不包含拓扑、排序或状态判断。
 - `RailRouteHelper.Replay`：从协议记录中按顺序产出信封或强类型 Operations
@@ -54,3 +58,5 @@ Save directory -> Monitoring -> Save Adapter -> schema mapper -> Domain snapshot
 领域术语及尚未解决的语义边界见仓库根目录的 [CONTEXT.md](../CONTEXT.md)。
 运行态算法、状态和 CLI 用法见 [operations.md](operations.md)。
 连续监听、记录和故障行为见 [monitoring.md](monitoring.md)。
+本机投影、告警生命周期和 Web 行为见
+[live-operations.md](live-operations.md)。

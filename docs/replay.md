@@ -22,6 +22,18 @@ await foreach (var item in reader.ReadOperationsReportsAsync(
 }
 ```
 
+需要重建与实时仪表盘相同的最新状态和告警历史时，回放完整信封并交给投影器：
+
+```csharp
+var projector = new LiveOperationsProjector();
+await foreach (var envelope in reader.ReadAllAsync(stream, cancellationToken))
+{
+    projector.Apply(envelope);
+}
+
+var state = projector.Current;
+```
+
 行为约束：
 
 - 接受 UTF-8 JSONL；LF 与 CRLF 都由 `StreamReader` 正确分行。
@@ -36,3 +48,5 @@ await foreach (var item in reader.ReadOperationsReportsAsync(
   `Sequence` 与 `CapturedAtUtc`。
 
 测试使用代码生成的内存记录，不包含游戏或玩家数据。
+南通/太原投影回放的验收边界见
+[live-operations.md](live-operations.md)。

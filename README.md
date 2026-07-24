@@ -12,7 +12,9 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 - 从快照推断列车当前/下一站、前向进路可达性、进路缺口和可能受阻状态；
 - 比较前后快照中的进路建立、改向和释放；
 - 以版本化 JSONL 连续记录并回放 Operations 报告；
+- 将实时或回放报告投影为按地图隔离的最新运行图、进路事件时间线和告警生命周期；
 - 持续监听存档目录，自动稳定、去重、归组和排序新存档；
+- 提供只绑定 loopback 的 localhost Web 运行仪表盘；
 - 使用合成测试数据的协议回放和受控场景回放；
 - `analyze-save`、`compare-saves` 与 `watch-saves` 命令行工具。
 
@@ -61,6 +63,17 @@ dotnet run --project src/RailRouteHelper.Cli -- \
 [operations.md](docs/operations.md)，监听规则见
 [monitoring.md](docs/monitoring.md)。
 
+启动本机 Web 仪表盘并持续监听存档目录：
+
+```shell
+dotnet run --project src/RailRouteHelper.Web -- \
+  "/path/to/saves" --listen "http://127.0.0.1:5080"
+```
+
+`--listen` 只接受 `localhost`、`127.0.0.0/8` 或 `::1` 的 HTTP origin，不允许
+绑定局域网或公网地址。仪表盘、投影状态和告警生命周期见
+[live-operations.md](docs/live-operations.md)。
+
 ## 本地代码图谱
 
 `graphify-out/` 是已忽略的本地产物，不提交到 Git。需要刷新带 LLM 语义关系的完整
@@ -79,4 +92,5 @@ graphify label . --backend=openai --max-concurrency=2
 [architecture.md](docs/architecture.md)，存档格式与读取示例见
 [save-files.md](docs/save-files.md)，监听行为见
 [monitoring.md](docs/monitoring.md)，回放行为见 [replay.md](docs/replay.md)，
-领域术语见 [CONTEXT.md](CONTEXT.md)。
+本机投影和仪表盘见 [live-operations.md](docs/live-operations.md)，领域术语见
+[CONTEXT.md](CONTEXT.md)。

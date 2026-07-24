@@ -1,6 +1,6 @@
 # 项目进度
 
-更新时间：2026-07-23
+更新时间：2026-07-24
 
 ## 第一阶段：基础设施
 
@@ -34,7 +34,7 @@
 `2.3.24`。62 份受支持版本存档全部映射成功；其余 38 份旧版本仍可无损读取，
 但会被语义 mapper 明确拒绝。
 
-最新自动验证结果：
+该阶段完成时的自动验证结果：
 
 - 24 项测试通过（其中 schema mapper 7 项、Operations 5 项、Monitoring 3 项）；
 - 62/62 份受支持语料映射成功，0 失败；
@@ -73,7 +73,7 @@
 
 ## 第三阶段：运行态推理
 
-状态：前两个垂直切片已完成。
+状态：前三个垂直切片已完成。
 
 - [x] 建立纯内存 `OperationsAnalyzer` 深模块
 - [x] 从轨道端点构建前向拓扑，并按 `Connected` 约束已选分支
@@ -90,6 +90,12 @@
 - [x] 对损坏、未知版本和 schema 不匹配存档输出脱敏诊断后继续
 - [x] 提供 `watch-saves`、`--once` 和不覆盖已有文件的 `--record`
 - [x] 建立南通/太原脱敏连续 JSONL 回放测试
+- [x] 建立线程安全 `LiveOperationsProjector`，按地图投影最新运行图
+- [x] 保留有界进路事件时间线和已解决告警历史
+- [x] 为 `PossibleBlocked` 建立 Warning 的打开、持续、恢复和复发生命周期
+- [x] 提供只绑定 loopback 的 localhost Web 仪表盘与 `/api/live`
+- [x] 建立南通/太原 JSONL→ReplayReader→Projector 端到端回放测试
+- [x] 在随机 loopback 端口对真实 Kestrel 页面和 API 执行 HTTP 测试
 - [ ] 在更多地图上验证复杂咽喉、环路和多个同时分配分支
 
 本机验收结果：
@@ -103,6 +109,16 @@
   `Established`；对太原三份存档输出 `0,1,2` 和
   `Retargeted`、`Released`。
 - 两组 JSONL 记录分别为 2 行和 3 行；再次指定同一记录路径会拒绝覆盖。
+- 南通投影回放最终显示下一站2道可达和 `Established`；太原投影回放保留
+  `Retargeted`、`Released` 时间线并最终显示列车位于2道。
+
+最新自动验证结果：
+
+- 29 项测试通过（其中 Operations/Live Operations 9 项、Web 1 项）；
+- localhost Web HTTP 测试使用真实 Kestrel 和随机 loopback 端口；
+- 全部回放 fixture 均由代码构造，不包含玩家原始存档。
 
 运行态算法、证据等级和命令行用法见 [operations.md](operations.md)。
 持续监听、协议负载和记录行为见 [monitoring.md](monitoring.md)。
+投影器、告警生命周期和 localhost Web 见
+[live-operations.md](live-operations.md)。

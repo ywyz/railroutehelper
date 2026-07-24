@@ -39,7 +39,9 @@ var report = new OperationsAnalyzer().Analyze(current, previous);
 
 `PossibleBlocked` 不等于确定“卡车”。零速本身不触发该状态；必须同时存在有效的
 `notMovingSince`、当前游戏时间和前方进路缺口。停在计划站台等待发车时不会被标为
-疑似受阻。
+疑似受阻。Live Operations 只把这一状态映射为 Warning，并由后续报告维护打开、
+持续和恢复生命周期；不会在投影或 UI 层把它升级为确定故障。详见
+[live-operations.md](live-operations.md)。
 
 ## 拓扑与证据边界
 
