@@ -14,7 +14,7 @@
 | `protocolVersion` | integer | 当前固定为 `1`；未知版本必须拒绝，不能猜测解析。 |
 | `sequence` | integer | 数据源内的连续递增序号；回放层检查重复、乱序和缺号。 |
 | `capturedAtUtc` | RFC 3339 timestamp | 捕获时间，使用 UTC 偏移。 |
-| `messageType` | string | 消息类型；当前定义 `snapshot`、`operations-report` 和 `save-monitor-diagnostic`。 |
+| `messageType` | string | 消息类型；当前定义 `runtime-snapshot`、`operations-report` 和 `save-monitor-diagnostic`。 |
 | `payload` | JSON value | 由消息类型定义的负载。 |
 
 兼容策略：
@@ -40,3 +40,20 @@
 
 `save-monitor-diagnostic` 同样具有独立的 `payloadVersion=1`，只包含源文件名、
 稳定错误码和脱敏说明。
+
+## Runtime 快照
+
+`runtime-snapshot` 的 `payloadVersion` 当前为 `1`，schema ID 为
+`rail-route-runtime/v1`。负载只包含：
+
+- `sessionId`：每次采集器启动生成的新身份；
+- `networkId`：当前地图/网络身份；
+- `snapshot`：与数据源无关的 `OperationalSnapshot`。
+
+TCP Adapter 只监听 IPv4 loopback，默认端口为 `5081`。每个连接使用同一种
+UTF-8 JSONL 编码，单帧上限 4 MiB。接收端允许断开后重新连接，但同一
+`sessionId` 的 `sequence` 必须严格递增；重复或倒退帧只关闭当前连接，不清空
+已有投影，也不停止监听后续连接。
+
+运行时快照不携带游戏对象、程序集类型名或任意对象转储。采集侧必须先把列车、
+轨道、车站、道岔/信号连接和占用状态归一化为领域 DTO。

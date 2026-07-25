@@ -6,3 +6,5 @@ graphify-out/
 **/obj/
 TestResults/
 artifacts/
+private/
+*.runtime.local.json

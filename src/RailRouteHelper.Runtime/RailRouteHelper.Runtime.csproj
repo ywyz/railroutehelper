@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RailRouteHelper.Runtime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RailRouteHelper.Core/RailRouteHelper.Core.csproj" />
+    <ProjectReference Include="../RailRouteHelper.LiveOperations/RailRouteHelper.LiveOperations.csproj" />
+    <ProjectReference Include="../RailRouteHelper.Operations/RailRouteHelper.Operations.csproj" />
+    <ProjectReference Include="../RailRouteHelper.Protocol/RailRouteHelper.Protocol.csproj" />
+  </ItemGroup>
+</Project>

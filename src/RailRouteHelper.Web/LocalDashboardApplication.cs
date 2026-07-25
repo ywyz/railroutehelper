@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Json;
 using RailRouteHelper.LiveOperations;
+using RailRouteHelper.Runtime;
 
 namespace RailRouteHelper.Web;
 
@@ -20,6 +21,15 @@ public static class LocalDashboardApplication
             options.ListenUri.GetLeftPart(UriPartial.Authority));
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(projector);
+        RuntimeTelemetryServer? runtimeServer = null;
+        if (options.RuntimePort is { } runtimePort)
+        {
+            runtimeServer = new RuntimeTelemetryServer(runtimePort);
+            builder.Services.AddSingleton(runtimeServer);
+            builder.Services.AddSingleton<RuntimeOperationsPipeline>();
+            builder.Services.AddHostedService<RuntimeProjectionService>();
+        }
+
         builder.Services.Configure<JsonOptions>(
             json =>
             {
@@ -65,6 +75,16 @@ public static class LocalDashboardApplication
             "/api/live",
             (LiveOperationsProjector liveProjector) =>
                 Results.Ok(liveProjector.Current));
+        application.MapGet(
+            "/api/runtime",
+            () => runtimeServer is null
+                ? Results.Ok(
+                    new
+                    {
+                        mode = "save-directory",
+                        isListening = false,
+                    })
+                : Results.Ok(runtimeServer.Status));
 
         return application;
     }
@@ -77,8 +97,9 @@ public static class LocalDashboardApplication
             await using var application = Build(options);
             Console.WriteLine(
                 $"Rail Route Helper dashboard: {options.ListenUri}");
-            Console.WriteLine(
-                $"Watching saves: {options.SaveDirectory}");
+            Console.WriteLine(options.RuntimePort is { } runtimePort
+                ? $"Runtime telemetry: tcp://127.0.0.1:{runtimePort}"
+                : $"Watching saves: {options.SaveDirectory}");
             await application.RunAsync();
             return 0;
         }
@@ -87,7 +108,10 @@ public static class LocalDashboardApplication
         {
             Console.Error.WriteLine(error.Message);
             Console.Error.WriteLine(
-                "Usage: railroutehelper-web <save-directory> "
+                "Usage: railroutehelper-web "
+                + "[--runtime-port 5081] "
+                + "[--listen http://127.0.0.1:5080]\n"
+                + "   or: railroutehelper-web <save-directory> "
                 + "[--listen http://127.0.0.1:5080]");
             return 1;
         }

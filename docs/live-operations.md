@@ -45,7 +45,20 @@ Web；这些职责分别保留在 Monitoring、Operations 和展示 Adapter 中�
 
 ## localhost Web
 
-启动：
+默认启动实时模式：
+
+```shell
+dotnet run --project src/RailRouteHelper.Web
+```
+
+自定义实时 TCP 与 Web 端口：
+
+```shell
+dotnet run --project src/RailRouteHelper.Web -- \
+  --runtime-port 6081 --listen "http://127.0.0.1:6080"
+```
+
+旧的存档目录监听仅作为离线兼容模式：
 
 ```shell
 dotnet run --project src/RailRouteHelper.Web -- \
@@ -56,6 +69,8 @@ dotnet run --project src/RailRouteHelper.Web -- \
 
 - `/`：自包含 HTML 仪表盘，每 1.5 秒轮询本机状态；
 - `/api/live`：camelCase JSON，枚举使用 camelCase 字符串。
+- `/api/runtime`：实时接收器的监听、连接、接收/拒绝帧数和最后错误；离线模式
+  返回 `mode=save-directory`。
 
 默认和自定义监听地址都必须是普通 HTTP loopback origin。`0.0.0.0`、局域网地址、
 公网域名、带路径/query/fragment 或用户信息的 URL 会被拒绝。响应使用
@@ -63,7 +78,8 @@ dotnet run --project src/RailRouteHelper.Web -- \
 `Referrer-Policy`；页面没有第三方脚本、字体或网络依赖。
 
 仪表盘显示各地图最新列车状态、当前位置、下一站、可达性、进路变化时间线，以及
-活动/已恢复告警。它仍是独立、只读、非注入式工具，不修改、移动或删除存档。
+活动/已恢复告警。实时采集器断开时保留最后一个有效投影；同一或新会话重连后继续
+更新。Web 进程不加载游戏程序集，也不控制游戏。
 
 ## 回放验收
 
@@ -75,5 +91,7 @@ dotnet run --project src/RailRouteHelper.Web -- \
   `Retargeted`、`Released`；
 - 告警测试覆盖打开、连续观察和恢复；
 - Web 测试在随机 loopback 端口启动真实 Kestrel，通过 HTTP 验证页面和 JSON。
+- Runtime 测试在随机 loopback TCP 端口验证分片帧、断线重连、坏序号隔离和
+  `runtime-snapshot → OperationsAnalyzer → Projector → /api/live`。
 
 测试不包含玩家原始存档、地图资源或游戏文件。

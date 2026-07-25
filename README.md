@@ -1,12 +1,14 @@
 # Rail Route Helper
 
-Rail Route Helper 是一个规划中的跨平台、只读调度辅助工具，用于从玩家自己的
-Rail Route 存档中生成运行快照，并通过版本化协议记录和回放列车状态。
+Rail Route Helper 是一个规划中的跨平台、只读调度辅助工具。当前主路径通过
+localhost 接收运行中游戏的最小状态快照；存档解析仅保留为离线分析和回归工具，
+不是实时功能的数据源。
 
 当前实现提供独立进程中的跨平台只读能力：
 
 - Windows 与 Linux 共用的 .NET 核心；
-- 版本化实时协议；
+- `runtime/v1` 版本化实时快照协议和仅绑定 `127.0.0.1` 的 TCP 接收器；
+- 采集器断线重连、会话序号隔离和有界帧校验；
 - 能保留任意 MessagePack 键类型的只读 `.mp.lz4` 存档 Adapter；
 - 按已验证游戏版本识别列车、轨道、车站和进路开通证据的 schema mapper；
 - 从快照推断列车当前/下一站、前向进路可达性、进路缺口和可能受阻状态；
@@ -22,9 +24,9 @@ schema mapper 当前覆盖有本地真实语料的 `2.3.17`—`2.3.24` 版本子
 版本表见 [schema-mapping.md](docs/schema-mapping.md)，完成度和证据边界见
 [项目进度](docs/progress.md)。
 
-本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。向游戏
-进程注入代码的实时插件不属于当前获准范围；其实现需要先满足
-[合规门禁](docs/compliance.md)。
+本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容、玩家原始存档或本机探测
+配置。私有、本机、单人、只读互操作原型与面向用户的公开发布使用不同
+[合规门禁](docs/compliance.md)；当前不会发布或自动安装游戏进程内加载器。
 
 本项目是非官方社区工具，与 Bitrich.info 或 Valve 无隶属、背书或合作关系。
 
@@ -63,15 +65,16 @@ dotnet run --project src/RailRouteHelper.Cli -- \
 [operations.md](docs/operations.md)，监听规则见
 [monitoring.md](docs/monitoring.md)。
 
-启动本机 Web 仪表盘并持续监听存档目录：
+启动本机 Web 仪表盘和默认实时接收端：
 
 ```shell
-dotnet run --project src/RailRouteHelper.Web -- \
-  "/path/to/saves" --listen "http://127.0.0.1:5080"
+dotnet run --project src/RailRouteHelper.Web
 ```
 
-`--listen` 只接受 `localhost`、`127.0.0.0/8` 或 `::1` 的 HTTP origin，不允许
-绑定局域网或公网地址。仪表盘、投影状态和告警生命周期见
+默认在 `127.0.0.1:5081` 接收 `runtime-snapshot`，Web 位于
+`http://127.0.0.1:5080`。可用 `--runtime-port` 改变 TCP 端口。传入一个存档
+目录会切换到旧的离线监听模式，不能和 `--runtime-port` 同时使用。两种监听都
+只允许 loopback，不绑定局域网或公网地址。详见
 [live-operations.md](docs/live-operations.md)。
 
 ## 本地代码图谱

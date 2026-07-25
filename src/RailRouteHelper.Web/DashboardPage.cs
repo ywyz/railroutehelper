@@ -123,7 +123,7 @@ internal static class DashboardPage
           <header>
             <div>
               <h1><small>Local read-only console</small>Rail Route Helper</h1>
-              <p class="subtle">Live Operations · 仅监听本机存档，不控制游戏</p>
+              <p class="subtle">Live Operations · 仅接收本机只读状态，不控制游戏</p>
             </div>
             <div class="connection"><i id="dot" class="dot"></i><span id="connection">正在连接</span></div>
           </header>
@@ -256,11 +256,25 @@ internal static class DashboardPage
             };
             const refresh = async () => {
               try {
-                const response = await fetch("/api/live", { cache: "no-store" });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                render(await response.json());
-                byId("dot").className = "dot live";
-                byId("connection").textContent = "本机数据流正常";
+                const [liveResponse, runtimeResponse] = await Promise.all([
+                  fetch("/api/live", { cache: "no-store" }),
+                  fetch("/api/runtime", { cache: "no-store" })
+                ]);
+                if (!liveResponse.ok || !runtimeResponse.ok) {
+                  throw new Error(`HTTP ${liveResponse.status}/${runtimeResponse.status}`);
+                }
+                render(await liveResponse.json());
+                const source = await runtimeResponse.json();
+                if (source.mode === "save-directory") {
+                  byId("dot").className = "dot live";
+                  byId("connection").textContent = "离线存档监听正常";
+                } else if (source.isCollectorConnected) {
+                  byId("dot").className = "dot live";
+                  byId("connection").textContent = `实时采集已连接 · ${source.acceptedFrames} 帧`;
+                } else {
+                  byId("dot").className = "dot";
+                  byId("connection").textContent = `等待实时采集器 · ${source.acceptedFrames} 帧`;
+                }
               } catch (error) {
                 byId("dot").className = "dot error";
                 byId("connection").textContent = `连接失败：${error.message}`;

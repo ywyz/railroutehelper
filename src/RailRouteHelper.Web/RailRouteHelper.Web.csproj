@@ -6,5 +6,6 @@
   <ItemGroup>
     <ProjectReference Include="../RailRouteHelper.LiveOperations/RailRouteHelper.LiveOperations.csproj" />
     <ProjectReference Include="../RailRouteHelper.Monitoring/RailRouteHelper.Monitoring.csproj" />
+    <ProjectReference Include="../RailRouteHelper.Runtime/RailRouteHelper.Runtime.csproj" />
   </ItemGroup>
 </Project>

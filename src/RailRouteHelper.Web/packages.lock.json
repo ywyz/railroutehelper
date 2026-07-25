@@ -58,6 +58,15 @@
           "RailRouteHelper.Operations": "[1.0.0, )"
         }
       },
+      "railroutehelper.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )",
+          "RailRouteHelper.LiveOperations": "[1.0.0, )",
+          "RailRouteHelper.Operations": "[1.0.0, )",
+          "RailRouteHelper.Protocol": "[1.0.0, )"
+        }
+      },
       "railroutehelper.savefiles": {
         "type": "Project",
         "dependencies": {

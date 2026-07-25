@@ -4,25 +4,46 @@ namespace RailRouteHelper.Web;
 
 public sealed record LocalDashboardOptions
 {
-    public LocalDashboardOptions(Uri listenUri, string? saveDirectory)
+    public LocalDashboardOptions(
+        Uri listenUri,
+        string? saveDirectory,
+        int? runtimePort = null)
     {
         ArgumentNullException.ThrowIfNull(listenUri);
         ValidateListenUri(listenUri);
+        if (runtimePort is < 0 or > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(runtimePort),
+                "Runtime TCP port must be between 0 and 65535.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(saveDirectory)
+            && runtimePort is not null)
+        {
+            throw new ArgumentException(
+                "Save-directory and runtime sources are mutually exclusive.");
+        }
 
         ListenUri = listenUri;
         SaveDirectory = string.IsNullOrWhiteSpace(saveDirectory)
             ? null
             : Path.GetFullPath(saveDirectory);
+        RuntimePort = runtimePort;
     }
 
     public Uri ListenUri { get; }
 
     public string? SaveDirectory { get; }
 
+    public int? RuntimePort { get; }
+
     public static LocalDashboardOptions Parse(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
         string? saveDirectory = null;
+        var runtimePort = 5081;
+        var runtimePortWasSpecified = false;
         var listenUri = new Uri("http://127.0.0.1:5080");
         for (var index = 0; index < args.Count; index++)
         {
@@ -37,6 +58,23 @@ public sealed record LocalDashboardOptions
                 {
                     throw new ArgumentException(
                         "--listen requires an absolute loopback HTTP URL.");
+                }
+
+                continue;
+            }
+
+            if (string.Equals(
+                    argument,
+                    "--runtime-port",
+                    StringComparison.Ordinal))
+            {
+                runtimePortWasSpecified = true;
+                if (++index >= args.Count
+                    || !int.TryParse(args[index], out runtimePort)
+                    || runtimePort is < 1 or > ushort.MaxValue)
+                {
+                    throw new ArgumentException(
+                        "--runtime-port requires a TCP port from 1 to 65535.");
                 }
 
                 continue;
@@ -57,15 +95,18 @@ public sealed record LocalDashboardOptions
             saveDirectory = argument;
         }
 
-        if (string.IsNullOrWhiteSpace(saveDirectory))
+        if (saveDirectory is not null && runtimePortWasSpecified)
         {
-            throw new ArgumentException("A save directory is required.");
+            throw new ArgumentException(
+                "A save directory cannot be combined with --runtime-port.");
         }
 
         var options = new LocalDashboardOptions(
             listenUri,
-            saveDirectory);
-        if (!Directory.Exists(options.SaveDirectory))
+            saveDirectory,
+            saveDirectory is null ? runtimePort : null);
+        if (options.SaveDirectory is not null
+            && !Directory.Exists(options.SaveDirectory))
         {
             throw new DirectoryNotFoundException(
                 $"The save directory does not exist: {options.SaveDirectory}");

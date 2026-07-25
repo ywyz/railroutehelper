@@ -29,7 +29,11 @@ public sealed class LocalDashboardHttpTests
             .Get<IServerAddressesFeature>()!
             .Addresses
             .Single();
-        using var client = new HttpClient
+        using var handler = new HttpClientHandler
+        {
+            UseProxy = false,
+        };
+        using var client = new HttpClient(handler)
         {
             BaseAddress = new Uri(address),
         };

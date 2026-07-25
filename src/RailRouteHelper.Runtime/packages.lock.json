@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0": {
+      "railroutehelper.core": {
+        "type": "Project"
+      },
+      "railroutehelper.liveoperations": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Protocol": "[1.0.0, )"
+        }
+      },
+      "railroutehelper.operations": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )"
+        }
+      },
+      "railroutehelper.protocol": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )",
+          "RailRouteHelper.Operations": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}
