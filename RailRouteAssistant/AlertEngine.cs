@@ -32,91 +32,50 @@ namespace RailRouteAssistant
 
         private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        /// <summary>
-        /// 估算列车还有多少秒需要停车（基于速度和前方区间数）
-        /// </summary>
-        private static int EstimateSecondsToStop(int speedKmh, int lookahead)
-        {
-            if (lookahead <= 0) return 0;
-            // 粗略估算：每个区间约 200-400 米
-            // 速度 km/h -> m/s = /3.6
-            // 每段区间按 300 米算
-            double distMeters = lookahead * 300.0;
-            double speedMs = speedKmh / 3.6;
-            if (speedMs < 1) return 999;
-            return (int)(distMeters / speedMs);
-        }
-
         private static List<AlertInfo> EvaluateTrain(TrainSnapshot snap)
         {
             var alerts = new List<AlertInfo>();
             var nextStation = !string.IsNullOrEmpty(snap.NextStationName) ? $" -> {snap.NextStationName}" : "";
-
-            bool signalOpen = snap.HasActingSignal && snap.SignalState.Contains("开放");
-            bool signalClosed = snap.HasActingSignal && snap.SignalState.Contains("关闭");
             var sigInfo = snap.HasActingSignal ? $"（{snap.SignalState}）" : "";
 
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
             {
-                int estSec = EstimateSecondsToStop(snap.CurrentSpeed, snap.LookaheadCount);
+                // NeedsRouteAhead = 前方信号区间需要配置进路
+                if (snap.NeedsRouteAhead)
+                {
+                    // 速度高 = 还有时间配置
+                    // 速度低 = 即将停车
+                    if (snap.CurrentSpeed <= 10)
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"前方信号区间需配置进路！速度{snap.CurrentSpeed}km/h 即将停车{nextStation}{sigInfo}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    else
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "warning",
+                            TrainName = snap.TrainName,
+                            Message = $"前方信号区间需配置进路 速度{snap.CurrentSpeed}km/h{nextStation}{sigInfo}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                }
 
-                // 前方0段 - 立即停车
+                // 前方完全没有铁轨段 = 进路完全未配置
                 if (snap.LookaheadCount == 0)
                 {
                     alerts.Add(new AlertInfo
                     {
                         Level = "critical",
                         TrainName = snap.TrainName,
-                        Message = $"前方进路未配置，即将停车{nextStation}{sigInfo}",
-                        TimestampMs = NowMs()
-                    });
-                }
-                // 前方1-2段 - 紧急
-                else if (snap.LookaheadCount <= 2)
-                {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "critical",
-                        TrainName = snap.TrainName,
-                        Message = $"进路即将结束！剩余{snap.LookaheadCount}段 约{estSec}s后停车{nextStation}{sigInfo}",
-                        TimestampMs = NowMs()
-                    });
-                }
-                // 前方3-5段 - 警告
-                else if (snap.LookaheadCount <= 5)
-                {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "warning",
-                        TrainName = snap.TrainName,
-                        Message = $"前方进路仅剩{snap.LookaheadCount}段 约{estSec}s后需停车{nextStation}{sigInfo}",
-                        TimestampMs = NowMs()
-                    });
-                }
-
-                // 信号关闭 - 警告
-                if (signalClosed)
-                {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "warning",
-                        TrainName = snap.TrainName,
-                        Message = $"前方信号关闭，即将减速停车{nextStation}",
-                        TimestampMs = NowMs()
-                    });
-                }
-
-                // 需要配置前方进路 - 无论信号状态都告警
-                if (snap.NeedsRouteAhead)
-                {
-                    string level = snap.LookaheadCount <= 2 ? "critical" :
-                                   snap.LookaheadCount <= 5 ? "warning" : "warning";
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = level,
-                        TrainName = snap.TrainName,
-                        Message = $"需要配置前方进路！剩余{snap.LookaheadCount}段 速度{snap.CurrentSpeed}km/h 约{estSec}s{nextStation}{sigInfo}",
+                        Message = $"前方进路未配置 即将停车{nextStation}{sigInfo}",
                         TimestampMs = NowMs()
                     });
                 }
@@ -128,8 +87,8 @@ namespace RailRouteAssistant
                     {
                         Level = "warning",
                         TrainName = snap.TrainName,
-                        Message = snap.LookaheadCount == 0
-                            ? $"因进路不足即将停车{nextStation}"
+                        Message = snap.NeedsRouteAhead
+                            ? $"因前方信号即将停车{nextStation}{sigInfo}"
                             : $"即将停车{nextStation}",
                         TimestampMs = NowMs()
                     });
@@ -150,34 +109,25 @@ namespace RailRouteAssistant
                 }
                 else if (!snap.CanDepart)
                 {
-                    // 非到站停车 - 线路中停车
-                    if (snap.LookaheadCount == 0)
+                    // 非到站停车
+                    if (snap.NeedsRouteAhead)
+                    {
+                        // 因为信号/进路问题停车
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"已停车 - 前方信号区间需配置进路{nextStation}{sigInfo}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    else if (snap.LookaheadCount == 0)
                     {
                         alerts.Add(new AlertInfo
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
                             Message = $"已停车 - 前方进路未配置{nextStation}{sigInfo}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                    else if (snap.NeedsRouteAhead)
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "warning",
-                            TrainName = snap.TrainName,
-                            Message = $"已停车 - 需要配置前方进路（剩余{snap.LookaheadCount}段）{nextStation}{sigInfo}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                    else if (signalClosed)
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "warning",
-                            TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方信号关闭{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -240,7 +190,7 @@ namespace RailRouteAssistant
         private static List<AlertInfo> DetectRouteConflicts(List<TrainSnapshot> trains)
         {
             var alerts = new List<AlertInfo>();
-            var running = trains.Where(t => t.CurrentSpeed > 0 && t.LookaheadCount > 0).ToList();
+            var running = trains.Where(t => t.CurrentSpeed > 0).ToList();
 
             for (int i = 0; i < running.Count; i++)
             {
@@ -249,7 +199,8 @@ namespace RailRouteAssistant
                     var a = running[i];
                     var b = running[j];
 
-                    if (a.LookaheadCount <= 3 && b.LookaheadCount <= 3)
+                    // 两列车都需要前方进路且下一站相同
+                    if (a.NeedsRouteAhead && b.NeedsRouteAhead)
                     {
                         if (!string.IsNullOrEmpty(a.NextStationName) &&
                             a.NextStationName == b.NextStationName)

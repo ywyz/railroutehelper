@@ -288,16 +288,14 @@ namespace RailRouteAssistantDesktop
             // 颜色
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
+            else if (t.NeedsRoute && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
+                item.ForeColor = ColorCritical;
+            else if (t.NeedsRoute && t.OnBoard)
+                item.ForeColor = ColorWarning;
             else if (t.OnBoard && t.Lookahead == 0 && t.Speed > 0)
                 item.ForeColor = ColorCritical;
             else if (t.CanDepart && t.Lookahead == 0)
                 item.ForeColor = ColorCritical;
-            else if (t.HasSignal && t.SignalState.Contains("关闭"))
-                item.ForeColor = ColorWarning;
-            else if (t.Lookahead <= 2 && t.OnBoard && t.Speed > 0 && !(t.HasSignal && t.SignalState.Contains("开放")))
-                item.ForeColor = ColorWarning;
-            else if (t.NeedsRoute)
-                item.ForeColor = ColorWarning;
             else if (t.CanDepart)
                 item.ForeColor = ColorWarning;
             else if (t.Waiting || !t.OnBoard)
