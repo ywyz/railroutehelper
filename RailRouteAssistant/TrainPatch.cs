@@ -437,29 +437,35 @@ namespace RailRouteAssistant
                 snap.HasActingSignal = true;
                 var sigType = signal.GetType();
 
-                // 输出所有信号字段原始值用于诊断
                 var parts = new List<string>();
 
                 var isActingField = AccessTools.Field(sigType, "IsActing");
+                var pendingRouteField = AccessTools.Field(sigType, "PendingRoute");
+
+                // 信号开放/关闭/等待
+                bool pending = false;
+                if (pendingRouteField != null)
+                    pending = Convert.ToBoolean(pendingRouteField.GetValue(signal));
+
                 if (isActingField != null)
                 {
                     var val = isActingField.GetValue(signal);
-                    parts.Add($"IsActing={val}");
+                    if (val is bool b)
+                    {
+                        parts.Add(b ? "开放" : "关闭");
+                    }
+                    else
+                    {
+                        var nullable = val as bool?;
+                        if (nullable.HasValue)
+                            parts.Add(nullable.Value ? "开放" : "关闭");
+                        else
+                            parts.Add("未确定");
+                    }
                 }
 
-                var pendingRouteField = AccessTools.Field(sigType, "PendingRoute");
-                if (pendingRouteField != null)
-                {
-                    var val = Convert.ToBoolean(pendingRouteField.GetValue(signal));
-                    parts.Add($"PendingRoute={val}");
-                }
-
-                var pendingRouteTimerField = AccessTools.Field(sigType, "PendingRouteTimer");
-                if (pendingRouteTimerField != null)
-                {
-                    var val = Convert.ToSingle(pendingRouteTimerField.GetValue(signal));
-                    if (val > 0) parts.Add($"Timer={val:F1}s");
-                }
+                if (pending)
+                    parts.Add("等待");
 
                 var pendingRouteManualField = AccessTools.Field(sigType, "PendingRouteManual");
                 if (pendingRouteManualField != null)

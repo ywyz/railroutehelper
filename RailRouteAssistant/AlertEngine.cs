@@ -41,12 +41,15 @@ namespace RailRouteAssistant
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
             {
+                // 前方剩余信号区间数（优先用 RouteRemainingSteps，回退到 LookaheadCount）
+                int remainBlocks = snap.RouteTotalSteps > 0 ? snap.RouteRemainingSteps : snap.LookaheadCount;
                 var remainMsg = snap.RouteTotalSteps > 0
-                    ? $"进路{snap.RouteCurrentStep + 1}/{snap.RouteTotalSteps} 剩余{snap.RouteRemainingSteps}个区间"
-                    : $"前方{snap.LookaheadCount}段铁轨";
+                    ? $"进路{snap.RouteCurrentStep + 1}/{snap.RouteTotalSteps} 剩余{snap.RouteRemainingSteps}个信号区间"
+                    : $"前方{snap.LookaheadCount}段";
 
                 // NeedsRouteAhead = 前方信号区间需要配置进路
-                if (snap.NeedsRouteAhead)
+                // 剩余≥3个信号区间时不告警（有足够距离）
+                if (snap.NeedsRouteAhead && remainBlocks < 3)
                 {
                     if (snap.CurrentSpeed <= 10)
                     {
@@ -112,14 +115,19 @@ namespace RailRouteAssistant
                 else if (!snap.CanDepart)
                 {
                     // 非到站停车
-                    if (snap.NeedsRouteAhead)
+                    int remainBlocks = snap.RouteTotalSteps > 0 ? snap.RouteRemainingSteps : snap.LookaheadCount;
+                    var remainMsg = snap.RouteTotalSteps > 0
+                        ? $"剩余{snap.RouteRemainingSteps}个信号区间"
+                        : $"前方{snap.LookaheadCount}段";
+
+                    if (snap.NeedsRouteAhead && remainBlocks < 3)
                     {
                         // 因为信号/进路问题停车
                         alerts.Add(new AlertInfo
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方信号区间需配置进路{nextStation}{sigInfo}",
+                            Message = $"已停车 - 前方信号区间需配置进路 {remainMsg}{nextStation}{sigInfo}",
                             TimestampMs = NowMs()
                         });
                     }

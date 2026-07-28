@@ -30,18 +30,33 @@ Rail Route 游戏 (Unity 进程)
 
 ### 告警规则
 
+告警基于**信号区间**（从一个信号到下一个信号之间的路）而非铁轨段数。剩余信号区间≥3时不告警。
+
 | 类型 | 级别 | 触发条件 |
 |------|------|----------|
-| 前方信号区间需配置进路 | 紧急 | `NeedsRouteAhead=true` 且速度≤10km/h |
-| 前方信号区间需配置进路 | 警告 | `NeedsRouteAhead=true` 且速度>10km/h |
+| 前方信号区间需配置进路 | 紧急 | `NeedsRouteAhead=true`，剩余<3个信号区间，速度≤10km/h |
+| 前方信号区间需配置进路 | 警告 | `NeedsRouteAhead=true`，剩余<3个信号区间，速度>10km/h |
 | 前方进路未配置 | 紧急 | `LookaheadCount=0` 且在运行中 |
-| 已停车 - 需配置进路 | 紧急 | 停车且 `NeedsRouteAhead=true` |
+| 已停车 - 需配置进路 | 紧急 | 停车且 `NeedsRouteAhead=true`，剩余<3个信号区间 |
 | 可发车但无进路 | 紧急 | `CanDepart=true` 且 `LookaheadCount=0` |
 | 线路停车超时 | 警告 | 非到站停车超过 10 秒 |
 | 即将发车 | 警告 | `CanDepart=true` 且在停车 |
 | 即将进入地图 | 警告/信息 | 等待入图且 5 分钟内 |
 | 进路冲突 | 警告 | 两列车均需进路且下一站相同 |
 | 列车故障 | 紧急 | `IsBrokenDown=true` |
+
+### 信号状态显示
+
+桌面程序信号列显示中文状态：
+
+| 显示 | 含义 |
+|------|------|
+| 开放 | `IsActing=True`，信号已开放 |
+| 关闭 | `IsActing=False`，信号未开放 |
+| 等待 | `PendingRoute=True`，进路等待中 |
+| 开放 等待 | 信号已开放但进路待定 |
+| 关闭 等待 | 信号关闭且进路待定 |
+| 手动 | `PendingRouteManual=True`，手动操作 |
 
 ### 桌面程序 UI
 
