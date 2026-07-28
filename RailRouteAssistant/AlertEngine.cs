@@ -36,14 +36,13 @@ namespace RailRouteAssistant
         {
             var alerts = new List<AlertInfo>();
             var nextStation = !string.IsNullOrEmpty(snap.NextStationName) ? $" -> {snap.NextStationName}" : "";
-            var sigInfo = snap.HasActingSignal ? $"（{snap.SignalState}）" : "";
 
-            // 信号是否开放/关闭/等待
-            bool signalOpen = snap.HasActingSignal && snap.SignalState.Contains("开放");
-            bool signalClosed = snap.HasActingSignal && snap.SignalState.Contains("关闭");
-            bool signalWaiting = snap.HasActingSignal && snap.SignalState.Contains("等待");
-            // 信号未开放 = 关闭 或 等待 或 无信号
-            bool signalNotOpen = !signalOpen;
+            // 信号状态通过 TargetSpeed 判断（IsActing 不代表开放/关闭）
+            // TargetSpeed > 0 = 信号开放，可以继续走
+            // TargetSpeed ≈ 0 = 信号关闭，需要停车
+            bool signalOpen = snap.TargetSpeed > 0.5f;
+            bool signalClosed = !signalOpen;
+            var sigInfo = signalOpen ? "（信号开放）" : "（信号关闭）";
 
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
@@ -55,12 +54,12 @@ namespace RailRouteAssistant
                     {
                         Level = "critical",
                         TrainName = snap.TrainName,
-                        Message = $"前方进路未配置 即将停车{nextStation}{sigInfo}",
+                        Message = $"前方进路未配置 即将停车{nextStation}",
                         TimestampMs = NowMs()
                     });
                 }
-                // 信号未开放（关闭/等待/无信号）= 列车即将被迫减速停车
-                else if (signalNotOpen)
+                // 信号关闭 = 列车即将被迫减速停车
+                else if (signalClosed)
                 {
                     if (snap.CurrentSpeed <= 10)
                     {
@@ -68,7 +67,7 @@ namespace RailRouteAssistant
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"前方信号{snap.SignalState}！前方{snap.LookaheadCount}段 速度{snap.CurrentSpeed}km/h 即将停车{nextStation}",
+                            Message = $"前方信号关闭！速度{snap.CurrentSpeed}km/h 即将停车{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -78,7 +77,7 @@ namespace RailRouteAssistant
                         {
                             Level = "warning",
                             TrainName = snap.TrainName,
-                            Message = $"前方信号{snap.SignalState} 前方{snap.LookaheadCount}段 速度{snap.CurrentSpeed}km/h{nextStation}",
+                            Message = $"前方信号关闭 速度{snap.CurrentSpeed}km/h 减速中{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -86,15 +85,13 @@ namespace RailRouteAssistant
                 // 信号开放 = 列车可以继续走，不告警
 
                 // 速度很低且在减速 - 即将停车
-                if (snap.CurrentSpeed <= 5 && snap.TargetSpeed <= 0.1f)
+                if (snap.CurrentSpeed <= 5 && signalClosed)
                 {
                     alerts.Add(new AlertInfo
                     {
                         Level = "warning",
                         TrainName = snap.TrainName,
-                        Message = signalNotOpen
-                            ? $"因前方信号{snap.SignalState}即将停车{nextStation}"
-                            : $"即将停车{nextStation}",
+                        Message = $"因前方信号关闭即将停车{nextStation}",
                         TimestampMs = NowMs()
                     });
                 }
@@ -114,14 +111,14 @@ namespace RailRouteAssistant
                 }
                 else if (!snap.CanDepart)
                 {
-                    // 非到站停车 - 只有信号未开放时才告警
-                    if (signalNotOpen && snap.HasActingSignal)
+                    // 非到站停车 - 信号关闭导致停车
+                    if (signalClosed && snap.HasActingSignal)
                     {
                         alerts.Add(new AlertInfo
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方信号{snap.SignalState} 前方{snap.LookaheadCount}段{nextStation}",
+                            Message = $"已停车 - 前方信号关闭{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -131,7 +128,7 @@ namespace RailRouteAssistant
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方进路未配置{nextStation}{sigInfo}",
+                            Message = $"已停车 - 前方进路未配置{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }

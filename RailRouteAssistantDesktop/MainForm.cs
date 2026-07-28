@@ -205,6 +205,7 @@ namespace RailRouteAssistantDesktop
                         {
                             Name = t.GetProperty("name").GetString() ?? "?",
                             Speed = t.GetProperty("speed").GetInt32(),
+                            TargetSpeed = t.GetProperty("targetSpeed").GetSingle(),
                             Delay = t.GetProperty("delay").GetDouble(),
                             CanDepart = t.GetProperty("canDepart").GetBoolean(),
                             Finished = t.GetProperty("finished").GetBoolean(),
@@ -347,7 +348,8 @@ namespace RailRouteAssistantDesktop
             var status = string.Join(" ", statusParts);
 
             var signalStr = !t.OnBoard ? "" :
-                t.HasSignal ? t.SignalState : "无信号";
+                t.TargetSpeed > 0.5f ? "开放" :
+                t.HasSignal ? "关闭" : "无信号";
 
             // 前方停站 + 站台号
             var stationStr = "";
@@ -368,13 +370,13 @@ namespace RailRouteAssistantDesktop
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
 
-            bool signalNotOpen = t.OnBoard && t.HasSignal && !t.SignalState.Contains("开放");
+            bool signalClosed = t.OnBoard && t.TargetSpeed <= 0.5f;
 
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
-            else if (signalNotOpen && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
+            else if (signalClosed && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
                 item.ForeColor = ColorCritical;
-            else if (signalNotOpen && t.OnBoard)
+            else if (signalClosed && t.OnBoard)
                 item.ForeColor = ColorWarning;
             else if (t.OnBoard && t.Lookahead == 0 && t.Speed > 0)
                 item.ForeColor = ColorCritical;
@@ -402,7 +404,7 @@ namespace RailRouteAssistantDesktop
 
     public class TrainData
     {
-        public string Name; public int Speed; public double Delay;
+        public string Name; public int Speed; public float TargetSpeed; public double Delay;
         public bool CanDepart; public bool Finished; public bool BrokenDown;
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;

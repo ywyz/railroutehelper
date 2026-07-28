@@ -490,6 +490,42 @@ namespace RailRouteAssistant
                 snap.HasActingSignal = true;
                 var sigType = signal.GetType();
 
+                // === 诊断日志：输出信号对象的类型名、所有字段和属性 ===
+                Plugin.Log.LogInfo($"[信号诊断] 类型: {sigType.FullName}");
+
+                // 同时输出 BoardSemaphore 的属性（可视化对象，可能包含信号颜色）
+                var boardSemProp = sigType.GetProperty("BoardSemaphore");
+                if (boardSemProp != null)
+                {
+                    var boardSem = boardSemProp.GetValue(signal);
+                    if (boardSem != null)
+                    {
+                        var bsType = boardSem.GetType();
+                        Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore 类型: {bsType.FullName}");
+                        var bsProps = bsType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        foreach (var p in bsProps)
+                        {
+                            try
+                            {
+                                if (p.GetMethod == null || p.GetIndexParameters().Length > 0) continue;
+                                var pval = p.GetValue(boardSem);
+                                Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore属性 {p.Name} ({p.PropertyType.Name}): {(pval == null ? "null" : pval.ToString())}");
+                            }
+                            catch { }
+                        }
+                        var bsFields = bsType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        foreach (var f in bsFields)
+                        {
+                            try
+                            {
+                                var fval = f.GetValue(boardSem);
+                                Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore字段 {f.Name} ({f.FieldType.Name}): {(fval == null ? "null" : fval.ToString())}");
+                            }
+                            catch { }
+                        }
+                    }
+                }
+
                 // 输出所有字段的原始值用于诊断
                 var parts = new List<string>();
                 var allFields = sigType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
