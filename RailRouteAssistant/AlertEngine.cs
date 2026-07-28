@@ -38,41 +38,16 @@ namespace RailRouteAssistant
             var nextStation = !string.IsNullOrEmpty(snap.NextStationName) ? $" -> {snap.NextStationName}" : "";
             var sigInfo = snap.HasActingSignal ? $"（{snap.SignalState}）" : "";
 
+            // 信号是否开放/关闭/等待
+            bool signalOpen = snap.HasActingSignal && snap.SignalState.Contains("开放");
+            bool signalClosed = snap.HasActingSignal && snap.SignalState.Contains("关闭");
+            bool signalWaiting = snap.HasActingSignal && snap.SignalState.Contains("等待");
+            // 信号未开放 = 关闭 或 等待 或 无信号
+            bool signalNotOpen = !signalOpen;
+
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
             {
-                // 前方剩余信号区间数（优先用 RouteRemainingSteps，回退到 LookaheadCount）
-                int remainBlocks = snap.RouteTotalSteps > 0 ? snap.RouteRemainingSteps : snap.LookaheadCount;
-                var remainMsg = snap.RouteTotalSteps > 0
-                    ? $"进路{snap.RouteCurrentStep + 1}/{snap.RouteTotalSteps} 剩余{snap.RouteRemainingSteps}个信号区间"
-                    : $"前方{snap.LookaheadCount}段";
-
-                // NeedsRouteAhead = 前方信号区间需要配置进路
-                // 剩余≥3个信号区间时不告警（有足够距离）
-                if (snap.NeedsRouteAhead && remainBlocks < 3)
-                {
-                    if (snap.CurrentSpeed <= 10)
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = snap.TrainName,
-                            Message = $"前方信号区间需配置进路！{remainMsg} 速度{snap.CurrentSpeed}km/h 即将停车{nextStation}{sigInfo}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                    else
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "warning",
-                            TrainName = snap.TrainName,
-                            Message = $"前方信号区间需配置进路 {remainMsg} 速度{snap.CurrentSpeed}km/h{nextStation}{sigInfo}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                }
-
                 // 前方完全没有铁轨段 = 进路完全未配置
                 if (snap.LookaheadCount == 0)
                 {
@@ -84,6 +59,42 @@ namespace RailRouteAssistant
                         TimestampMs = NowMs()
                     });
                 }
+                // 信号未开放（关闭/等待/无信号）= 列车即将被迫减速停车
+                else if (signalNotOpen)
+                {
+                    if (snap.CurrentSpeed <= 10)
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"前方信号{snap.SignalState}！前方{snap.LookaheadCount}段 速度{snap.CurrentSpeed}km/h 即将停车{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    else
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "warning",
+                            TrainName = snap.TrainName,
+                            Message = $"前方信号{snap.SignalState} 前方{snap.LookaheadCount}段 速度{snap.CurrentSpeed}km/h{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                }
+                // 信号开放 + NeedsRouteAhead = 前方某处最终需要配进路，但当前可以继续走
+                // 只在剩余铁轨段很少时提醒
+                else if (snap.NeedsRouteAhead && snap.LookaheadCount <= 2)
+                {
+                    alerts.Add(new AlertInfo
+                    {
+                        Level = "info",
+                        TrainName = snap.TrainName,
+                        Message = $"前方{snap.LookaheadCount}段后需配置进路 速度{snap.CurrentSpeed}km/h{nextStation}（信号开放）",
+                        TimestampMs = NowMs()
+                    });
+                }
 
                 // 速度很低且在减速 - 即将停车
                 if (snap.CurrentSpeed <= 5 && snap.TargetSpeed <= 0.1f)
@@ -92,8 +103,8 @@ namespace RailRouteAssistant
                     {
                         Level = "warning",
                         TrainName = snap.TrainName,
-                        Message = snap.NeedsRouteAhead
-                            ? $"因前方信号即将停车{nextStation}{sigInfo}"
+                        Message = signalNotOpen
+                            ? $"因前方信号{snap.SignalState}即将停车{nextStation}"
                             : $"即将停车{nextStation}",
                         TimestampMs = NowMs()
                     });
@@ -114,20 +125,14 @@ namespace RailRouteAssistant
                 }
                 else if (!snap.CanDepart)
                 {
-                    // 非到站停车
-                    int remainBlocks = snap.RouteTotalSteps > 0 ? snap.RouteRemainingSteps : snap.LookaheadCount;
-                    var remainMsg = snap.RouteTotalSteps > 0
-                        ? $"剩余{snap.RouteRemainingSteps}个信号区间"
-                        : $"前方{snap.LookaheadCount}段";
-
-                    if (snap.NeedsRouteAhead && remainBlocks < 3)
+                    // 非到站停车 - 只有信号未开放时才告警
+                    if (signalNotOpen && snap.HasActingSignal)
                     {
-                        // 因为信号/进路问题停车
                         alerts.Add(new AlertInfo
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方信号区间需配置进路 {remainMsg}{nextStation}{sigInfo}",
+                            Message = $"已停车 - 前方信号{snap.SignalState} 前方{snap.LookaheadCount}段{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }

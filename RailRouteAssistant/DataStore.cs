@@ -28,6 +28,7 @@ namespace RailRouteAssistant
         public int RouteTotalSteps;        // 进路总区间数
         public int RouteCurrentStep;       // 当前区间索引
         public int RouteRemainingSteps;    // 剩余区间数
+        public int NextPlatformNumber;     // 下一站站台号
         public string NextStationName;
         public double? NextPrepareTimeTotalSeconds;
         public double? NextArrivalTimeTotalSeconds;

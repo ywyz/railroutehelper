@@ -124,6 +124,7 @@ namespace RailRouteAssistant
                 sb.Append("\"routeTotal\":").Append(s.RouteTotalSteps).Append(",");
                 sb.Append("\"routeCur\":").Append(s.RouteCurrentStep).Append(",");
                 sb.Append("\"routeRemain\":").Append(s.RouteRemainingSteps).Append(",");
+                sb.Append("\"platform\":").Append(s.NextPlatformNumber).Append(",");
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons));
                 sb.Append("}");

@@ -224,9 +224,8 @@ namespace RailRouteAssistant
                     snap.NextArrivalTimeTotalSeconds = SafeTimeSpanNullable(legType, leg, "NextArrival")?.TotalSeconds;
                 }
 
-                // 下一站
-                var nextVisits = SafeGetObject(t, train, "NextStationVisits");
-                snap.NextStationName = GetFirstStationName(nextVisits);
+                // 下一站 + 站台号
+                CollectNextStation(t, train, snap);
 
                 snap.StopReasons = GetStopReasons(train);
 
@@ -353,6 +352,60 @@ namespace RailRouteAssistant
                 return count;
             }
             catch { return 0; }
+        }
+
+        /// <summary>
+        /// 采集下一站名和站台号
+        /// </summary>
+        private static void CollectNextStation(Type trainType, object train, TrainSnapshot snap)
+        {
+            try
+            {
+                // 调用 NextStationVisit 方法
+                var nsvMethod = AccessTools.Method(trainType, "NextStationVisit");
+                if (nsvMethod == null)
+                {
+                    // 回退到 NextStationVisits
+                    var visits = SafeGetObject(trainType, train, "NextStationVisits");
+                    snap.NextStationName = GetFirstStationName(visits);
+                    return;
+                }
+
+                var visit = nsvMethod.Invoke(train, null);
+                if (visit == null)
+                {
+                    snap.NextStationName = "";
+                    return;
+                }
+
+                var visitType = visit.GetType();
+
+                // 站名
+                var stationProp = AccessTools.PropertyGetter(visitType, "Station");
+                if (stationProp != null)
+                {
+                    var station = stationProp.Invoke(visit, null);
+                    snap.NextStationName = station?.ToString() ?? "";
+                }
+
+                // 站台号
+                var platformNumProp = AccessTools.PropertyGetter(visitType, "PlatformNumber");
+                if (platformNumProp != null)
+                {
+                    var val = platformNumProp.Invoke(visit, null);
+                    if (val != null)
+                    {
+                        // Nullable<int>
+                        var nullable = val as int?;
+                        if (nullable.HasValue)
+                            snap.NextPlatformNumber = nullable.Value;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectNextStation 异常: {ex.Message}");
+            }
         }
 
         private static string GetFirstStationName(object visits)

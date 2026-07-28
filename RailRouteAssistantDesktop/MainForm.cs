@@ -68,10 +68,9 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("车号", 60);
             _trainList.Columns.Add("km/h", 40);
             _trainList.Columns.Add("延误", 45);
-            _trainList.Columns.Add("进路", 55);
             _trainList.Columns.Add("信号", 80);
-            _trainList.Columns.Add("状态", 100);
-            _trainList.Columns.Add("下一站", 90);
+            _trainList.Columns.Add("状态", 80);
+            _trainList.Columns.Add("前方停站", 140);
             Controls.Add(_trainList);
 
             // 2. trainHeader - Dock=Top
@@ -168,9 +167,7 @@ namespace RailRouteAssistantDesktop
                             NeedsRoute = t.GetProperty("needsRoute").GetBoolean(),
                             HasSignal = t.GetProperty("hasSignal").GetBoolean(),
                             SignalState = t.GetProperty("signalState").GetString() ?? "",
-                            RouteTotal = t.GetProperty("routeTotal").GetInt32(),
-                            RouteCur = t.GetProperty("routeCur").GetInt32(),
-                            RouteRemain = t.GetProperty("routeRemain").GetInt32(),
+                            Platform = t.GetProperty("platform").GetInt32(),
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? ""
                         });
@@ -285,7 +282,6 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add("");
             item.SubItems.Add("");
             item.SubItems.Add("");
-            item.SubItems.Add("");
             UpdateTrainItem(item, t);
             return item;
         }
@@ -297,36 +293,40 @@ namespace RailRouteAssistantDesktop
             var statusParts = new List<string>();
             if (t.Waiting) statusParts.Add("等待入图");
             if (t.BrokenDown) statusParts.Add("故障");
-            if (t.NeedsRoute) statusParts.Add("需配进路");
             if (t.CanDepart) statusParts.Add("可发车");
             if (t.Finished) statusParts.Add("完成");
             if (t.OnBoard && t.Speed == 0 && !t.CanDepart && !t.Finished) statusParts.Add("停车");
             var status = string.Join(" ", statusParts);
 
             var signalStr = !t.OnBoard ? "" :
-                t.HasSignal ? t.SignalState :
-                t.Lookahead > 0 ? "畅通" : "无进路";
+                t.HasSignal ? t.SignalState : "无信号";
 
-            var routeStr = !t.OnBoard ? "" :
-                t.RouteTotal > 0 ? $"{t.RouteCur + 1}/{t.RouteTotal}" :
-                t.Lookahead > 0 ? $"{t.Lookahead}段" : "无";
+            // 前方停站 + 站台号
+            var stationStr = "";
+            if (!string.IsNullOrEmpty(t.NextStation))
+            {
+                stationStr = t.Platform > 0
+                    ? $"{t.NextStation} {t.Platform}台"
+                    : t.NextStation;
+            }
 
             item.Text = t.Name;
             item.SubItems[1].Text = $"{t.Speed}";
             item.SubItems[2].Text = delayStr;
-            item.SubItems[3].Text = routeStr;
-            item.SubItems[4].Text = signalStr;
-            item.SubItems[5].Text = status;
-            item.SubItems[6].Text = t.NextStation;
+            item.SubItems[3].Text = signalStr;
+            item.SubItems[4].Text = status;
+            item.SubItems[5].Text = stationStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
 
+            bool signalNotOpen = t.OnBoard && t.HasSignal && !t.SignalState.Contains("开放");
+
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
-            else if (t.NeedsRoute && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
+            else if (signalNotOpen && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
                 item.ForeColor = ColorCritical;
-            else if (t.NeedsRoute && t.OnBoard)
+            else if (signalNotOpen && t.OnBoard)
                 item.ForeColor = ColorWarning;
             else if (t.OnBoard && t.Lookahead == 0 && t.Speed > 0)
                 item.ForeColor = ColorCritical;
@@ -359,7 +359,6 @@ namespace RailRouteAssistantDesktop
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;
         public bool HasSignal; public string SignalState;
-        public int RouteTotal; public int RouteCur; public int RouteRemain;
-        public string NextStation; public string StopReasons;
+        public int Platform; public string NextStation; public string StopReasons;
     }
 }
