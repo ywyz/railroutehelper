@@ -68,7 +68,7 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("车号", 60);
             _trainList.Columns.Add("km/h", 40);
             _trainList.Columns.Add("延误", 45);
-            _trainList.Columns.Add("前方", 40);
+            _trainList.Columns.Add("进路", 55);
             _trainList.Columns.Add("信号", 80);
             _trainList.Columns.Add("状态", 100);
             _trainList.Columns.Add("下一站", 90);
@@ -168,6 +168,9 @@ namespace RailRouteAssistantDesktop
                             NeedsRoute = t.GetProperty("needsRoute").GetBoolean(),
                             HasSignal = t.GetProperty("hasSignal").GetBoolean(),
                             SignalState = t.GetProperty("signalState").GetString() ?? "",
+                            RouteTotal = t.GetProperty("routeTotal").GetInt32(),
+                            RouteCur = t.GetProperty("routeCur").GetInt32(),
+                            RouteRemain = t.GetProperty("routeRemain").GetInt32(),
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? ""
                         });
@@ -184,6 +187,40 @@ namespace RailRouteAssistantDesktop
                 _statusLabel.Text = $"  错误: {ex.Message}";
                 _statusLabel.ForeColor = Color.Red;
             }
+        }
+
+        /// <summary>
+        /// 根据车次前缀获取背景色
+        /// </summary>
+        private static Color GetTrainBackColor(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return ColorBg;
+            char c = name[0];
+            return c switch
+            {
+                'G' => Color.FromArgb(80, 30, 30),   // 高铁 - 暗红
+                'D' => Color.FromArgb(20, 40, 70),   // 动车 - 暗蓝
+                'Z' => Color.FromArgb(20, 60, 30),   // 直达 - 暗绿
+                'T' => Color.FromArgb(70, 50, 20),   // 特快 - 暗橙
+                'K' => Color.FromArgb(60, 55, 20),   // 快速 - 暗黄
+                'L' => Color.FromArgb(40, 40, 50),   // 临客 - 暗灰蓝
+                'S' => Color.FromArgb(50, 30, 60),   // 市郊 - 暗紫
+                _ => ColorBg
+            };
+        }
+
+        /// <summary>
+        /// 列车排序：在线运行 > 在线停车 > 等待入图 > 已完成
+        /// </summary>
+        private static int TrainSortPriority(TrainData t)
+        {
+            if (t.BrokenDown) return 0;          // 故障最优先
+            if (t.OnBoard && t.Speed > 0) return 1;  // 运行中
+            if (t.OnBoard && t.Speed == 0) return 2;  // 在线停车
+            if (t.OnBoard) return 3;              // 在线其他
+            if (t.Waiting) return 4;              // 等待入图
+            if (t.Finished) return 6;             // 已完成
+            return 5;                              // 其他
         }
 
         private void UpdateUI()
@@ -231,20 +268,13 @@ namespace RailRouteAssistantDesktop
             }
             _alertList.EndUpdate();
 
-            // 列车列表 - 数量变化时重建，否则只更新内容
-            if (_trainList.Items.Count != _trains.Count)
-            {
-                _trainList.BeginUpdate();
-                _trainList.Items.Clear();
-                foreach (var t in _trains)
-                    _trainList.Items.Add(CreateTrainItem(t));
-                _trainList.EndUpdate();
-            }
-            else
-            {
-                for (int i = 0; i < _trains.Count && i < _trainList.Items.Count; i++)
-                    UpdateTrainItem(_trainList.Items[i], _trains[i]);
-            }
+            // 列车列表 - 排序后重建（顺序会变化）
+            _trains.Sort((a, b) => TrainSortPriority(a).CompareTo(TrainSortPriority(b)));
+            _trainList.BeginUpdate();
+            _trainList.Items.Clear();
+            foreach (var t in _trains)
+                _trainList.Items.Add(CreateTrainItem(t));
+            _trainList.EndUpdate();
         }
 
         private ListViewItem CreateTrainItem(TrainData t)
@@ -277,15 +307,21 @@ namespace RailRouteAssistantDesktop
                 t.HasSignal ? t.SignalState :
                 t.Lookahead > 0 ? "畅通" : "无进路";
 
+            var routeStr = !t.OnBoard ? "" :
+                t.RouteTotal > 0 ? $"{t.RouteCur + 1}/{t.RouteTotal}" :
+                t.Lookahead > 0 ? $"{t.Lookahead}段" : "无";
+
             item.Text = t.Name;
             item.SubItems[1].Text = $"{t.Speed}";
             item.SubItems[2].Text = delayStr;
-            item.SubItems[3].Text = $"{t.Lookahead}";
+            item.SubItems[3].Text = routeStr;
             item.SubItems[4].Text = signalStr;
             item.SubItems[5].Text = status;
             item.SubItems[6].Text = t.NextStation;
 
             // 颜色
+            item.BackColor = GetTrainBackColor(t.Name);
+
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
             else if (t.NeedsRoute && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
@@ -298,10 +334,10 @@ namespace RailRouteAssistantDesktop
                 item.ForeColor = ColorCritical;
             else if (t.CanDepart)
                 item.ForeColor = ColorWarning;
-            else if (t.Waiting || !t.OnBoard)
-                item.ForeColor = ColorDim;
             else if (t.Finished)
                 item.ForeColor = ColorDim;
+            else if (t.Waiting || !t.OnBoard)
+                item.ForeColor = Color.FromArgb(160, 160, 160);
             else
                 item.ForeColor = Color.White;
         }
@@ -323,6 +359,7 @@ namespace RailRouteAssistantDesktop
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;
         public bool HasSignal; public string SignalState;
+        public int RouteTotal; public int RouteCur; public int RouteRemain;
         public string NextStation; public string StopReasons;
     }
 }

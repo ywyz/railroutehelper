@@ -1,9 +1,31 @@
 # Rail Route Helper
 
-Rail Route Helper 是一个规划中的跨平台、只读调度辅助工具，用于从玩家自己的
-Rail Route 存档中生成运行快照，并通过版本化协议记录和回放列车状态。
+Rail Route Helper 是一系列社区工具，用于从 Rail Route 游戏中获取运行数据并提供调度辅助。
 
-当前实现提供独立进程中的跨平台只读能力：
+## 实时调度助手（BepInEx 插件 + 桌面程序）
+
+通过 BepInEx 插件在游戏运行时实时采集列车数据，经 HTTP 提供给桌面程序显示告警和列车状态。
+
+```
+Rail Route 游戏 (Unity)
+├── BepInEx 插件 (RailRouteAssistant.dll)
+│   ├── Harmony 补丁 + 后台轮询线程 → 采集列车数据
+│   └── HTTP 服务器 (localhost:8787) → 提供 JSON API
+└── 桌面程序 (RailRouteAssistantDesktop.exe)
+    └── 轮询 HTTP → 显示告警列表 + 列车列表
+```
+
+**功能：**
+- 实时列车状态：车号、速度、延误、进路、信号
+- 告警引擎：进路未配置、信号区间需配进路、即将停车、停车超时、发车预告、入图预告、进路冲突
+- 车次分类着色：G/D/Z/T/K 不同背景色
+- 智能排序：运行中 > 停车 > 等待入图 > 已完成
+
+详见 [实时调度助手文档](docs/railroute-assistant.md)。
+
+## 存档分析工具（CLI + Web）
+
+从玩家存档中生成运行快照，通过版本化协议记录和回放列车状态。
 
 - Windows 与 Linux 共用的 .NET 核心；
 - 版本化实时协议；
@@ -18,13 +40,11 @@ Rail Route 存档中生成运行快照，并通过版本化协议记录和回放
 - 使用合成测试数据的协议回放和受控场景回放；
 - `analyze-save`、`compare-saves` 与 `watch-saves` 命令行工具。
 
-schema mapper 当前覆盖有本地真实语料的 `2.3.17`—`2.3.24` 版本子集，详细
+schema mapper 当前覆盖有本地真实语料的 `2.3.17`-`2.3.24` 版本子集，详细
 版本表见 [schema-mapping.md](docs/schema-mapping.md)，完成度和证据边界见
 [项目进度](docs/progress.md)。
 
-本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。向游戏
-进程注入代码的实时插件不属于当前获准范围；其实现需要先满足
-[合规门禁](docs/compliance.md)。
+本仓库不会包含或分发游戏 DLL、游戏资源、创意工坊内容或玩家原始存档。
 
 本项目是非官方社区工具，与 Bitrich.info 或 Valve 无隶属、背书或合作关系。
 

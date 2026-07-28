@@ -25,6 +25,9 @@ namespace RailRouteAssistant
         public bool NeedsRouteAhead;       // 是否需要前方进路
         public bool HasActingSignal;       // 前方是否有信号灯
         public string SignalState;         // 信号灯状态描述
+        public int RouteTotalSteps;        // 进路总区间数
+        public int RouteCurrentStep;       // 当前区间索引
+        public int RouteRemainingSteps;    // 剩余区间数
         public string NextStationName;
         public double? NextPrepareTimeTotalSeconds;
         public double? NextArrivalTimeTotalSeconds;

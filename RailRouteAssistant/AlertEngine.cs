@@ -41,18 +41,20 @@ namespace RailRouteAssistant
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
             {
+                var remainMsg = snap.RouteTotalSteps > 0
+                    ? $"进路{snap.RouteCurrentStep + 1}/{snap.RouteTotalSteps} 剩余{snap.RouteRemainingSteps}个区间"
+                    : $"前方{snap.LookaheadCount}段铁轨";
+
                 // NeedsRouteAhead = 前方信号区间需要配置进路
                 if (snap.NeedsRouteAhead)
                 {
-                    // 速度高 = 还有时间配置
-                    // 速度低 = 即将停车
                     if (snap.CurrentSpeed <= 10)
                     {
                         alerts.Add(new AlertInfo
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"前方信号区间需配置进路！速度{snap.CurrentSpeed}km/h 即将停车{nextStation}{sigInfo}",
+                            Message = $"前方信号区间需配置进路！{remainMsg} 速度{snap.CurrentSpeed}km/h 即将停车{nextStation}{sigInfo}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -62,7 +64,7 @@ namespace RailRouteAssistant
                         {
                             Level = "warning",
                             TrainName = snap.TrainName,
-                            Message = $"前方信号区间需配置进路 速度{snap.CurrentSpeed}km/h{nextStation}{sigInfo}",
+                            Message = $"前方信号区间需配置进路 {remainMsg} 速度{snap.CurrentSpeed}km/h{nextStation}{sigInfo}",
                             TimestampMs = NowMs()
                         });
                     }

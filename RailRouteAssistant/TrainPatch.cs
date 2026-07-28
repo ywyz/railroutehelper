@@ -211,6 +211,9 @@ namespace RailRouteAssistant
                 }
                 catch { }
 
+                // 进路区间信息（按信号区间算）
+                CollectRouteInfo(t, train, snap);
+
                 // ContractLeg
                 var leg = SafeGetObject(t, train, "ContractLeg");
                 if (leg != null)
@@ -370,6 +373,46 @@ namespace RailRouteAssistant
             }
             catch { }
             return "";
+        }
+
+        /// <summary>
+        /// 采集进路区间信息（按信号区间算，不是铁轨段数）
+        /// </summary>
+        private static void CollectRouteInfo(Type trainType, object train, TrainSnapshot snap)
+        {
+            try
+            {
+                // ActiveRouteRun 字段 (ServiceRouteRun)
+                var arrField = AccessTools.Field(trainType, "ActiveRouteRun");
+                if (arrField == null) return;
+
+                var routeRun = arrField.GetValue(train);
+                if (routeRun == null) return;
+
+                var rrType = routeRun.GetType();
+
+                // Steps 列表
+                var stepsField = AccessTools.Field(rrType, "Steps");
+                if (stepsField == null) return;
+
+                var steps = stepsField.GetValue(routeRun) as System.Collections.IList;
+                if (steps == null) return;
+
+                snap.RouteTotalSteps = steps.Count;
+
+                // CurrentStepIndex
+                var idxField = AccessTools.Field(rrType, "CurrentStepIndex");
+                if (idxField != null)
+                {
+                    snap.RouteCurrentStep = Convert.ToInt32(idxField.GetValue(routeRun));
+                    snap.RouteRemainingSteps = snap.RouteTotalSteps - snap.RouteCurrentStep - 1;
+                    if (snap.RouteRemainingSteps < 0) snap.RouteRemainingSteps = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectRouteInfo 异常: {ex.Message}");
+            }
         }
 
         /// <summary>
