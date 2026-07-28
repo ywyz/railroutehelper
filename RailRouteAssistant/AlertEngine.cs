@@ -83,18 +83,7 @@ namespace RailRouteAssistant
                         });
                     }
                 }
-                // 信号开放 + NeedsRouteAhead = 前方某处最终需要配进路，但当前可以继续走
-                // 只在剩余铁轨段很少时提醒
-                else if (snap.NeedsRouteAhead && snap.LookaheadCount <= 2)
-                {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "info",
-                        TrainName = snap.TrainName,
-                        Message = $"前方{snap.LookaheadCount}段后需配置进路 速度{snap.CurrentSpeed}km/h{nextStation}（信号开放）",
-                        TimestampMs = NowMs()
-                    });
-                }
+                // 信号开放 = 列车可以继续走，不告警
 
                 // 速度很低且在减速 - 即将停车
                 if (snap.CurrentSpeed <= 5 && snap.TargetSpeed <= 0.1f)

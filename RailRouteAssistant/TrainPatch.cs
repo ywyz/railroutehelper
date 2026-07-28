@@ -490,41 +490,22 @@ namespace RailRouteAssistant
                 snap.HasActingSignal = true;
                 var sigType = signal.GetType();
 
+                // 输出所有字段的原始值用于诊断
                 var parts = new List<string>();
-
-                var isActingField = AccessTools.Field(sigType, "IsActing");
-                var pendingRouteField = AccessTools.Field(sigType, "PendingRoute");
-
-                // 信号开放/关闭/等待
-                bool pending = false;
-                if (pendingRouteField != null)
-                    pending = Convert.ToBoolean(pendingRouteField.GetValue(signal));
-
-                if (isActingField != null)
+                var allFields = sigType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var f in allFields)
                 {
-                    var val = isActingField.GetValue(signal);
-                    if (val is bool b)
+                    try
                     {
-                        parts.Add(b ? "开放" : "关闭");
-                    }
-                    else
-                    {
-                        var nullable = val as bool?;
-                        if (nullable.HasValue)
-                            parts.Add(nullable.Value ? "开放" : "关闭");
+                        var val = f.GetValue(signal);
+                        if (val == null)
+                            parts.Add($"{f.Name}=null");
+                        else if (val is System.Collections.IEnumerable && !(val is string))
+                            parts.Add($"{f.Name}=[{f.FieldType.Name}]");
                         else
-                            parts.Add("未确定");
+                            parts.Add($"{f.Name}={val}");
                     }
-                }
-
-                if (pending)
-                    parts.Add("等待");
-
-                var pendingRouteManualField = AccessTools.Field(sigType, "PendingRouteManual");
-                if (pendingRouteManualField != null)
-                {
-                    var val = Convert.ToBoolean(pendingRouteManualField.GetValue(signal));
-                    if (val) parts.Add("手动");
+                    catch { }
                 }
 
                 snap.SignalState = string.Join(" ", parts);

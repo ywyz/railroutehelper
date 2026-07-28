@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -129,6 +130,53 @@ namespace RailRouteAssistantDesktop
                 Font = new Font("Microsoft YaHei UI", 8F)
             };
             Controls.Add(_statsLabel);
+
+            // 右键菜单 - 复制
+            var copyMenu = new ContextMenuStrip();
+            var copyItem = new ToolStripMenuItem("复制选中行");
+            copyItem.Click += (s, e) => CopySelectedToClipboard();
+            copyMenu.Items.Add(copyItem);
+
+            var copyAllItem = new ToolStripMenuItem("复制全部列车数据");
+            copyAllItem.Click += (s, e) => CopyAllToClipboard();
+            copyMenu.Items.Add(copyAllItem);
+
+            _trainList.ContextMenuStrip = copyMenu;
+            _alertList.ContextMenuStrip = copyMenu;
+        }
+
+        private void CopySelectedToClipboard()
+        {
+            var list = _trainList.Focused ? _trainList : _alertList;
+            if (list.SelectedItems.Count == 0) return;
+
+            var sb = new StringBuilder();
+            foreach (ListViewItem item in list.SelectedItems)
+            {
+                var parts = new List<string>();
+                foreach (ListViewItem.ListViewSubItem sub in item.SubItems)
+                    parts.Add(sub.Text);
+                sb.AppendLine(string.Join("\t", parts));
+            }
+            Clipboard.SetText(sb.ToString());
+        }
+
+        private void CopyAllToClipboard()
+        {
+            var sb = new StringBuilder();
+            // 表头
+            foreach (ColumnHeader col in _trainList.Columns)
+                sb.Append(col.Text + "\t");
+            sb.AppendLine();
+
+            foreach (ListViewItem item in _trainList.Items)
+            {
+                var parts = new List<string>();
+                foreach (ListViewItem.ListViewSubItem sub in item.SubItems)
+                    parts.Add(sub.Text);
+                sb.AppendLine(string.Join("\t", parts));
+            }
+            Clipboard.SetText(sb.ToString());
         }
 
         private async Task RefreshData()
