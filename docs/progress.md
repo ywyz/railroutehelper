@@ -1,6 +1,6 @@
 # 项目进度
 
-更新时间：2026-07-24
+更新时间：2026-07-28
 
 ## 第一阶段：基础设施
 
@@ -122,3 +122,35 @@
 持续监听、协议负载和记录行为见 [monitoring.md](monitoring.md)。
 投影器、告警生命周期和 localhost Web 见
 [live-operations.md](live-operations.md)。
+
+## 实时调度助手（RailRouteAssistant / RailRouteAssistantDesktop）
+
+状态：持续迭代中。
+
+实时调度助手通过 BepInEx 插件在游戏运行时采集列车数据，经 HTTP 提供给桌面程序
+显示告警和列车状态。插件目标为 .NET Framework 4.7.2，桌面程序目标为
+.NET 8 Windows Forms。
+
+### 已完成
+
+- [x] BepInEx 插件：Harmony 补丁 `Train.Move` + 后台轮询线程采集数据
+- [x] HTTP 服务器（localhost:8787）提供 JSON API
+- [x] 桌面程序：告警列表 + 列车列表，车次分类着色，智能排序
+- [x] 告警引擎：进路未配置、信号关闭、即将停车、停车超时、发车预告、入图预告
+- [x] 站台冲突检测：同站同站台，一列在站一列接近时告急
+- [x] 进路相交检测：两列车前方进路轨道段有交集时告急
+- [x] 通过 `TargetSpeed` 判断信号开放/关闭
+- [x] 从信号机 `Front` Connection 获取 `AllocationState`，信号开放但前方轨道 Free(灰) 时提前预警
+- [x] 从 `ResolvedStep.Destination` Connection 获取轨道标识用于碰撞检测
+- [x] 桌面程序列布局：前方停站与站台号分列显示
+- [x] GitHub Actions 工作流编译插件和桌面 exe
+
+### 已移除
+
+- 旧版进路冲突检测（基于下一站名匹配）：两列列车前往同一站不一定是冲突，
+  追踪运行属于正常的进路复用。已替换为基于轨道段交集的碰撞检测。
+
+### 待验证
+
+- [ ] 在复杂咽喉和多信号区间场景下验证 `AllocationState` 提前预警准确性
+- [ ] 在追踪运行场景下验证碰撞检测不误报

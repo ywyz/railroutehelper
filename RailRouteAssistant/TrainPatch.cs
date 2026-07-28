@@ -38,7 +38,7 @@ namespace RailRouteAssistant
                 if (_collecting) return;
 
                 // 节流：每 0.5 秒采集一次
-                var now = UnityEngine.Time.time;
+                var now = GetUnityTime();
                 if (now - _lastCollect < Plugin.UpdateInterval.Value) return;
 
                 lock (_collectLock)
@@ -240,6 +240,18 @@ namespace RailRouteAssistant
 
         // === 工具方法 ===
 
+        private static float GetUnityTime()
+        {
+            try
+            {
+                var timeType = AccessTools.TypeByName("UnityEngine.Time");
+                if (timeType == null) return Environment.TickCount / 1000f;
+                var prop = AccessTools.PropertyGetter(timeType, "time");
+                return prop != null ? Convert.ToSingle(prop.Invoke(null, null)) : Environment.TickCount / 1000f;
+            }
+            catch { return Environment.TickCount / 1000f; }
+        }
+
         private static T SafeField<T>(Type t, object obj, string name)
         {
             try
@@ -380,12 +392,26 @@ namespace RailRouteAssistant
 
                 var visitType = visit.GetType();
 
-                // 站名
+                // 站名（优先 FriendlyName，回退 Name，最后 ToString）
                 var stationProp = AccessTools.PropertyGetter(visitType, "Station");
                 if (stationProp != null)
                 {
                     var station = stationProp.Invoke(visit, null);
-                    snap.NextStationName = station?.ToString() ?? "";
+                    if (station != null)
+                    {
+                        var stType = station.GetType();
+                        var fnProp = stType.GetProperty("FriendlyName", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (fnProp != null && fnProp.GetMethod != null)
+                            snap.NextStationName = fnProp.GetValue(station) as string ?? "";
+                        if (string.IsNullOrEmpty(snap.NextStationName))
+                        {
+                            var nameProp = stType.GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            if (nameProp != null && nameProp.GetMethod != null)
+                                snap.NextStationName = nameProp.GetValue(station) as string ?? "";
+                        }
+                        if (string.IsNullOrEmpty(snap.NextStationName))
+                            snap.NextStationName = station.ToString() ?? "";
+                    }
                 }
 
                 // 站台号
@@ -419,7 +445,23 @@ namespace RailRouteAssistant
                     if (stationProp != null)
                     {
                         var station = stationProp.Invoke(visit, null);
-                        if (station != null) return station.ToString();
+                        if (station != null)
+                        {
+                            var stType = station.GetType();
+                            var fnProp = stType.GetProperty("FriendlyName", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            if (fnProp != null && fnProp.GetMethod != null)
+                            {
+                                var fn = fnProp.GetValue(station) as string;
+                                if (!string.IsNullOrEmpty(fn)) return fn;
+                            }
+                            var nameProp = stType.GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            if (nameProp != null && nameProp.GetMethod != null)
+                            {
+                                var name = nameProp.GetValue(station) as string;
+                                if (!string.IsNullOrEmpty(name)) return name;
+                            }
+                            return station.ToString();
+                        }
                     }
                     return visit.ToString();
                 }
@@ -461,10 +503,51 @@ namespace RailRouteAssistant
                     snap.RouteRemainingSteps = snap.RouteTotalSteps - snap.RouteCurrentStep - 1;
                     if (snap.RouteRemainingSteps < 0) snap.RouteRemainingSteps = 0;
                 }
+
+                // 从当前步骤之后提取每个 Step 的轨道段标识（用于碰撞检测）
+                CollectRouteStepTrackIds(steps, snap.RouteCurrentStep, snap);
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"CollectRouteInfo 异常: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 从进路步骤中提取前方轨道段标识
+        /// ResolvedStep 有 Destination (Connection) 字段，Connection 有 Name 属性
+        /// </summary>
+        private static void CollectRouteStepTrackIds(System.Collections.IList steps, int currentStepIndex, TrainSnapshot snap)
+        {
+            try
+            {
+                for (int i = currentStepIndex; i < steps.Count; i++)
+                {
+                    var step = steps[i];
+                    if (step == null) continue;
+
+                    var stepType = step.GetType();
+
+                    // ResolvedStep.Destination 是 Connection 类型（字段）
+                    var destField = stepType.GetField("Destination", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (destField == null) continue;
+
+                    var destConn = destField.GetValue(step);
+                    if (destConn == null) continue;
+
+                    var connType = destConn.GetType();
+                    var nameProp = connType.GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (nameProp != null && nameProp.GetMethod != null)
+                    {
+                        var name = nameProp.GetValue(destConn) as string;
+                        if (!string.IsNullOrEmpty(name))
+                            snap.RouteStepTrackIds.Add(name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectRouteStepTrackIds 异常: {ex.Message}");
             }
         }
 
@@ -490,63 +573,27 @@ namespace RailRouteAssistant
                 snap.HasActingSignal = true;
                 var sigType = signal.GetType();
 
-                // === 诊断日志：输出信号对象的类型名、所有字段和属性 ===
-                Plugin.Log.LogInfo($"[信号诊断] 类型: {sigType.FullName}");
+                // 简洁的信号状态描述
+                snap.SignalState = signal.ToString();
 
-                // 同时输出 BoardSemaphore 的属性（可视化对象，可能包含信号颜色）
-                var boardSemProp = sigType.GetProperty("BoardSemaphore");
-                if (boardSemProp != null)
+                // 获取信号机的 Front Connection 的 AllocationState
+                // State 枚举: Free=0(灰), Allocated=1(绿), Occupied=2(红), Shunting=3
+                var frontProp = sigType.GetProperty("Front", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (frontProp != null && frontProp.GetMethod != null)
                 {
-                    var boardSem = boardSemProp.GetValue(signal);
-                    if (boardSem != null)
+                    var frontConn = frontProp.GetValue(signal);
+                    if (frontConn != null)
                     {
-                        var bsType = boardSem.GetType();
-                        Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore 类型: {bsType.FullName}");
-                        var bsProps = bsType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        foreach (var p in bsProps)
+                        var connType = frontConn.GetType();
+                        var allocProp = connType.GetProperty("AllocationState", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (allocProp != null && allocProp.GetMethod != null)
                         {
-                            try
-                            {
-                                if (p.GetMethod == null || p.GetIndexParameters().Length > 0) continue;
-                                var pval = p.GetValue(boardSem);
-                                Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore属性 {p.Name} ({p.PropertyType.Name}): {(pval == null ? "null" : pval.ToString())}");
-                            }
-                            catch { }
-                        }
-                        var bsFields = bsType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        foreach (var f in bsFields)
-                        {
-                            try
-                            {
-                                var fval = f.GetValue(boardSem);
-                                Plugin.Log.LogInfo($"[信号诊断] BoardSemaphore字段 {f.Name} ({f.FieldType.Name}): {(fval == null ? "null" : fval.ToString())}");
-                            }
-                            catch { }
+                            var allocVal = allocProp.GetValue(frontConn);
+                            snap.FrontAllocationState = Convert.ToInt32(allocVal);
+                            Plugin.Log.LogInfo($"[信号] {snap.TrainName} 前方轨道状态={snap.FrontAllocationState} (0=灰/未配 1=绿/已配 2=红/占用)");
                         }
                     }
                 }
-
-                // 输出所有字段的原始值用于诊断
-                var parts = new List<string>();
-                var allFields = sigType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                foreach (var f in allFields)
-                {
-                    try
-                    {
-                        var val = f.GetValue(signal);
-                        if (val == null)
-                            parts.Add($"{f.Name}=null");
-                        else if (val is System.Collections.IEnumerable && !(val is string))
-                            parts.Add($"{f.Name}=[{f.FieldType.Name}]");
-                        else
-                            parts.Add($"{f.Name}={val}");
-                    }
-                    catch { }
-                }
-
-                snap.SignalState = string.Join(" ", parts);
-                if (string.IsNullOrEmpty(snap.SignalState))
-                    snap.SignalState = signal.ToString();
             }
             catch (Exception ex)
             {

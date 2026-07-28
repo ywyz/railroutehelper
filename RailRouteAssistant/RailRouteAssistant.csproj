@@ -6,7 +6,8 @@
     <RootNamespace>RailRouteAssistant</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <GameDir Condition="'$(GameDir)' == ''">C:\storygames\8007\steamapps\common\Rail Route</GameDir>
+    <!-- CI 构建时由 workflow 提供 GameDir 指向下载的 BepInEx 目录 -->
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Rail Route</GameDir>
     <ManagedDir>$(GameDir)\Rail Route_Data\Managed</ManagedDir>
     <BepInExCoreDir>$(GameDir)\BepInEx\core</BepInExCoreDir>
     <PluginOutputDir>$(GameDir)\BepInEx\plugins</PluginOutputDir>
@@ -23,7 +24,8 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- UnityEngine 和 RailRoute 仅本地开发时引用，CI 中通过反射访问 -->
+  <ItemGroup Condition="Exists('$(ManagedDir)\UnityEngine.dll')">
     <Reference Include="UnityEngine">
       <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
       <Private>false</Private>
@@ -38,7 +40,7 @@
     </Reference>
   </ItemGroup>
 
-  <Target Name="CopyToPlugins" AfterTargets="Build">
+  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="Exists('$(PluginOutputDir)')">
     <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll"
           DestinationFolder="$(PluginOutputDir)" />
     <Message Importance="high" Text="已复制到 BepInEx plugins: $(PluginOutputDir)" />

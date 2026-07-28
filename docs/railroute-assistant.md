@@ -27,16 +27,16 @@ Rail Route 游戏 (Unity 进程)
 - 停车信息：停车原因、停车时长
 - 下一站信息：站名 + 站台号
 
-### 信号状态（进行中）
+### 信号状态
 
-> **当前状态：正在研究如何正确判断信号开放/关闭。**
+通过 `TargetSpeed` 判断信号开放/关闭：`TargetSpeed > 0` 表示信号开放，`TargetSpeed ≈ 0` 表示信号关闭。
 
-已测试的方案：
-1. ~~`IsActing` 字段~~ - 不可靠，信号开放和关闭时都是 `True`，只表示"信号灯存在"
-2. ~~`TargetSpeed`~~ - 不准确，速度变化可能是切换铁轨减速，不代表信号关闭
-3. **正在测试**：`BoardSemaphore` 可视化对象的属性（可能包含信号颜色/状态）
+插件还从信号机的 `Front` Connection 获取前方轨道段的 `AllocationState`：
+- `Free (0)` = 灰色，未配置进路
+- `Allocated (1)` = 绿色，已配置进路
+- `Occupied (2)` = 红色，列车占用
 
-当前插件会输出 `BoardSemaphore` 的所有属性和字段到 BepInEx 日志（搜索 `[信号诊断] BoardSemaphore`），用于对比信号开放和关闭时的差异。
+当信号开放但前方轨道段为 Free 时，插件发出提前预警，提示玩家在前方信号机处需要配置进路。
 
 ### 告警规则（当前实现）
 
@@ -46,6 +46,7 @@ Rail Route 游戏 (Unity 进程)
 
 | 场景 | 级别 | 触发条件 |
 |------|------|----------|
+| 前方信号开放但前方轨道未配进路 | 警告 | 信号开放、前方轨道 `AllocationState=Free`、列车运行中 |
 | 前方进路未配置 | 紧急 | `LookaheadCount=0`（前方完全无铁轨段） |
 | 前方信号关闭 | 紧急 | 信号未开放 且 速度≤10km/h |
 | 前方信号关闭 | 警告 | 信号未开放 且 速度>10km/h |
@@ -66,7 +67,9 @@ Rail Route 游戏 (Unity 进程)
 |------|------|----------|
 | 即将发车 | 警告 | `CanDepart=true` 且在停车 |
 | 即将进入地图 | 警告/信息 | 等待入图且 5 分钟内 |
-| 进路冲突 | 警告 | 两列车均需进路且下一站相同 |
+| 站台冲突 | 紧急 | 两列车前往同一站同一站台，一列在站一列接近 |
+| 站台可能冲突 | 警告 | 两列车均在运行中且前往同一站同一站台 |
+| 进路相交 | 紧急 | 两列车前方进路经过同一段轨道 |
 | 列车故障 | 紧急 | `IsBrokenDown=true` |
 
 ### 桌面程序 UI
@@ -74,10 +77,11 @@ Rail Route 游戏 (Unity 进程)
 - **上半部分（告警区）**：按紧急 > 警告 > 信息排序
 - **下半部分（列车列表）**：按状态排序，不同车次类型用不同背景色区分
 
-列车列表列：`车号 | km/h | 延误 | 信号 | 状态 | 前方停站`
+列车列表列：`车号 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台`
 
-- **信号列**：显示开放/关闭/等待/无信号
-- **前方停站列**：显示站名 + 站台号（如 `南京站 3台`）
+- **信号列**：显示开放/关闭/无信号
+- **前方停站列**：仅显示站名
+- **站台列**：显示站台号（如 `3台`）
 
 列车排序优先级：故障 > 运行中 > 在线停车 > 在线其他 > 等待入图 > 其他 > 已完成
 
@@ -164,7 +168,8 @@ Rail Route 游戏 (Unity 进程)
       "hasRoute": false,
       "needsRoute": true,
       "hasSignal": true,
-      "signalState": "开放",
+      "signalState": "Node:Semaphore:320:287",
+      "frontAllocationState": 0,
       "platform": 3,
       "nextStation": "南京站",
       "stopReasons": ""
@@ -174,7 +179,7 @@ Rail Route 游戏 (Unity 进程)
     {
       "level": "warning",
       "train": "1228",
-      "message": "前方信号开放 前方1段 速度120km/h -> 南京站"
+      "message": "前方信号开放但前方轨道未配进路 速度120km/h 建议提前配置 -> 南京站"
     }
   ]
 }
@@ -204,13 +209,17 @@ BepInEx 日志位于：
 | `Game.Train.Train` | 列车主类，包含速度、信号、下一站等 |
 | `Game.Train.TrainRepository` | 列车仓库，`Trains` 属性返回所有列车 |
 | `Game.Schedule.StationVisit` | 站台访问信息，包含 Station 和 PlatformNumber |
-| `Game.Railroad.SavedSemaphoreState` | 信号灯状态，包含 IsActing 和 PendingRoute |
+| `Game.Railroad.Semaphore` | 信号机，包含 `Front`(Connection)、`TargetSpeed`、`AllocationState` |
+| `Game.Railroad.Connection` | 轨道段，包含 `AllocationState`(State 枚举) |
+| `Game.Maintenance.Routes.ServiceRouteRun` | 进路运行，包含 `Steps`(ResolvedStep 列表) |
+| `Game.Maintenance.Routes.ResolvedStep` | 进路步骤，包含 `Destination`(Connection) |
 
 ### 概念说明
 
 - **信号区间** = 两个信号灯（传感器）之间的路
-- **信号开放（`IsActing=True`）** = 当前信号区间可以通行，列车不需要停车
-- **信号关闭（`IsActing=False`）** = 信号未开放，列车将被迫减速停车
+- **`TargetSpeed > 0`** = 信号开放，列车可继续通行
+- **`TargetSpeed ≈ 0`** = 信号关闭，列车将被迫减速停车
+- **`AllocationState`** = 前方轨道段分配状态：`Free`(0)=灰/未配、`Allocated`(1)=绿/已配、`Occupied`(2)=红/占用
 - **`NeedsRouteAhead`** = 列车前方某处最终需要配置进路（但信号可能仍然开放）
 - **`LookaheadCount`** = 前方铁轨段数（仅用于判断完全无进路的情况）
 - **`PlatformNumber`** = 站台号（如 3台）
@@ -219,8 +228,11 @@ BepInEx 日志位于：
 
 本项目中的进路全部为**手动配置**，不涉及自动进路。告警系统帮助玩家判断：
 - 信号是否开放（列车能否继续通行）
+- 前方轨道段是否已配置进路（通过 `AllocationState` 提前预警）
 - 何时需要提前配置下一个信号区间
 - 哪些列车因信号关闭而停车
+
+> **关于进路冲突**：两列列车前往同一站不一定是冲突——追踪运行（前后列车沿同一进路依次通过）属于正常的进路复用，不是冲突。真正的冲突是不同进路汇聚到同一段轨道，当前通过 `ResolvedStep.Destination` Connection 的 `Name` 进行交集检测。
 
 ## 项目结构
 

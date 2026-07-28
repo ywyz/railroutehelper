@@ -24,3 +24,6 @@ LogOutput.log
 graphify-out/
 TestResults/
 artifacts/
+publish/
+.bepinex/
+bepinex.zip

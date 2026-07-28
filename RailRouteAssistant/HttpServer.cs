@@ -121,6 +121,7 @@ namespace RailRouteAssistant
                 sb.Append("\"needsRoute\":").Append(s.NeedsRouteAhead.ToString().ToLower()).Append(",");
                 sb.Append("\"hasSignal\":").Append(s.HasActingSignal.ToString().ToLower()).Append(",");
                 sb.Append("\"signalState\":").Append(JsonStr(s.SignalState)).Append(",");
+                sb.Append("\"frontAllocationState\":").Append(s.FrontAllocationState).Append(",");
                 sb.Append("\"routeTotal\":").Append(s.RouteTotalSteps).Append(",");
                 sb.Append("\"routeCur\":").Append(s.RouteCurrentStep).Append(",");
                 sb.Append("\"routeRemain\":").Append(s.RouteRemainingSteps).Append(",");

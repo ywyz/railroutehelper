@@ -14,7 +14,8 @@ namespace RailRouteAssistant
             foreach (var snap in onBoard)
                 alerts.AddRange(EvaluateTrain(snap));
 
-            alerts.AddRange(DetectRouteConflicts(onBoard));
+            alerts.AddRange(DetectPlatformConflicts(onBoard));
+            alerts.AddRange(DetectRouteCollisions(onBoard));
             alerts.AddRange(EvaluateUpcomingTrains(snapshots));
 
             return alerts
@@ -43,6 +44,19 @@ namespace RailRouteAssistant
             bool signalOpen = snap.TargetSpeed > 0.5f;
             bool signalClosed = !signalOpen;
             var sigInfo = signalOpen ? "（信号开放）" : "（信号关闭）";
+
+            // ========== 提前预警：信号开放但前方轨道段未配置进路（灰色） ==========
+            // AllocationState: 0=Free(灰/未配), 1=Allocated(绿/已配), 2=Occupied(红/占用)
+            if (signalOpen && snap.CurrentSpeed > 0 && snap.FrontAllocationState == 0)
+            {
+                alerts.Add(new AlertInfo
+                {
+                    Level = "warning",
+                    TrainName = snap.TrainName,
+                    Message = $"前方信号开放但前方轨道未配进路 速度{snap.CurrentSpeed}km/h 建议提前配置{nextStation}",
+                    TimestampMs = NowMs()
+                });
+            }
 
             // ========== 运行中列车 ==========
             if (snap.CurrentSpeed > 0)
@@ -186,34 +200,89 @@ namespace RailRouteAssistant
         }
 
         /// <summary>
-        /// 进路冲突检测
+        /// 站台冲突检测：两列车前往同一站同一站台
+        /// 仅限下一站；若一辆已出站（下一站已变）则不会匹配
         /// </summary>
-        private static List<AlertInfo> DetectRouteConflicts(List<TrainSnapshot> trains)
+        private static List<AlertInfo> DetectPlatformConflicts(List<TrainSnapshot> trains)
         {
             var alerts = new List<AlertInfo>();
-            var running = trains.Where(t => t.CurrentSpeed > 0).ToList();
+            var active = trains.Where(t => !t.FinishedSchedule).ToList();
 
-            for (int i = 0; i < running.Count; i++)
+            for (int i = 0; i < active.Count; i++)
             {
-                for (int j = i + 1; j < running.Count; j++)
+                for (int j = i + 1; j < active.Count; j++)
                 {
-                    var a = running[i];
-                    var b = running[j];
+                    var a = active[i];
+                    var b = active[j];
 
-                    // 两列车都需要前方进路且下一站相同
-                    if (a.NeedsRouteAhead && b.NeedsRouteAhead)
+                    // 必须有相同的下一站名和站台号
+                    if (string.IsNullOrEmpty(a.NextStationName)) continue;
+                    if (a.NextStationName != b.NextStationName) continue;
+                    if (a.NextPlatformNumber <= 0 || a.NextPlatformNumber != b.NextPlatformNumber)
+                        continue;
+
+                    // 一辆在站内停车（speed=0），另一辆正在运行（speed>0）-> 紧急
+                    bool aStopped = a.CurrentSpeed == 0;
+                    bool bStopped = b.CurrentSpeed == 0;
+                    bool aRunning = a.CurrentSpeed > 0;
+                    bool bRunning = b.CurrentSpeed > 0;
+
+                    if ((aStopped && bRunning) || (bStopped && aRunning))
                     {
-                        if (!string.IsNullOrEmpty(a.NextStationName) &&
-                            a.NextStationName == b.NextStationName)
+                        alerts.Add(new AlertInfo
                         {
-                            alerts.Add(new AlertInfo
-                            {
-                                Level = "warning",
-                                TrainName = $"{a.TrainName}/{b.TrainName}",
-                                Message = $"进路可能冲突：均前往 {a.NextStationName}",
-                                TimestampMs = NowMs()
-                            });
-                        }
+                            Level = "critical",
+                            TrainName = $"{a.TrainName}/{b.TrainName}",
+                            Message = $"站台冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台，一列在站一列接近",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    else if (aRunning && bRunning)
+                    {
+                        // 两列都在运行中前往同一站台 -> 警告
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "warning",
+                            TrainName = $"{a.TrainName}/{b.TrainName}",
+                            Message = $"站台可能冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    // 两列都停车在站 -> 已到达，不报
+                }
+            }
+
+            return alerts;
+        }
+
+        /// <summary>
+        /// 碰撞检测：两列车前方进路经过同一段轨道
+        /// </summary>
+        private static List<AlertInfo> DetectRouteCollisions(List<TrainSnapshot> trains)
+        {
+            var alerts = new List<AlertInfo>();
+            var withRoute = trains
+                .Where(t => !t.FinishedSchedule && t.RouteStepTrackIds.Count > 0)
+                .ToList();
+
+            for (int i = 0; i < withRoute.Count; i++)
+            {
+                for (int j = i + 1; j < withRoute.Count; j++)
+                {
+                    var a = withRoute[i];
+                    var b = withRoute[j];
+
+                    // 检查前方进路的轨道段是否有交集
+                    var common = a.RouteStepTrackIds.Intersect(b.RouteStepTrackIds).ToList();
+                    if (common.Count > 0)
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = $"{a.TrainName}/{b.TrainName}",
+                            Message = $"进路相交：前方{common.Count}段轨道重叠",
+                            TimestampMs = NowMs()
+                        });
                     }
                 }
             }

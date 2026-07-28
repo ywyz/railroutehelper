@@ -25,6 +25,7 @@ namespace RailRouteAssistant
         public bool NeedsRouteAhead;       // 是否需要前方进路
         public bool HasActingSignal;       // 前方是否有信号灯
         public string SignalState;         // 信号灯状态描述
+        public int FrontAllocationState;   // 前方轨道段分配状态: 0=Free(灰), 1=Allocated(绿), 2=Occupied(红)
         public int RouteTotalSteps;        // 进路总区间数
         public int RouteCurrentStep;       // 当前区间索引
         public int RouteRemainingSteps;    // 剩余区间数
@@ -33,6 +34,7 @@ namespace RailRouteAssistant
         public double? NextPrepareTimeTotalSeconds;
         public double? NextArrivalTimeTotalSeconds;
         public string StopReasons;
+        public List<string> RouteStepTrackIds = new List<string>(); // 前方进路步骤的轨道标识
     }
 
     /// <summary>

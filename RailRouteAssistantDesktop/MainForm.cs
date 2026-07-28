@@ -71,7 +71,8 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("延误", 45);
             _trainList.Columns.Add("信号", 80);
             _trainList.Columns.Add("状态", 80);
-            _trainList.Columns.Add("前方停站", 140);
+            _trainList.Columns.Add("前方停站", 100);
+            _trainList.Columns.Add("站台", 45);
             Controls.Add(_trainList);
 
             // 2. trainHeader - Dock=Top
@@ -331,6 +332,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add("");
             item.SubItems.Add("");
             item.SubItems.Add("");
+            item.SubItems.Add("");
             UpdateTrainItem(item, t);
             return item;
         }
@@ -351,14 +353,9 @@ namespace RailRouteAssistantDesktop
                 t.TargetSpeed > 0.5f ? "开放" :
                 t.HasSignal ? "关闭" : "无信号";
 
-            // 前方停站 + 站台号
-            var stationStr = "";
-            if (!string.IsNullOrEmpty(t.NextStation))
-            {
-                stationStr = t.Platform > 0
-                    ? $"{t.NextStation} {t.Platform}台"
-                    : t.NextStation;
-            }
+            // 前方停站（仅站名）+ 站台号单独一列
+            var stationStr = !string.IsNullOrEmpty(t.NextStation) ? t.NextStation : "";
+            var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
             item.Text = t.Name;
             item.SubItems[1].Text = $"{t.Speed}";
@@ -366,6 +363,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems[3].Text = signalStr;
             item.SubItems[4].Text = status;
             item.SubItems[5].Text = stationStr;
+            item.SubItems[6].Text = platformStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
