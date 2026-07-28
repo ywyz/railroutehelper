@@ -1,8 +1,26 @@
+# Build output
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# NuGet
+*.nupkg
+
+# Logs
+*.log
+LogOutput.log
+
+# Tools
 .codebase-memory/
 graphify-out/
-.idea/
-.vscode/
-**/bin/
-**/obj/
 TestResults/
 artifacts/
