@@ -25,7 +25,10 @@ namespace RailRouteAssistant
         public bool NeedsRouteAhead;       // 是否需要前方进路
         public bool HasActingSignal;       // 前方是否有信号灯
         public string SignalState;         // 信号灯状态描述
-        public int FrontAllocationState;   // 前方轨道段分配状态: 0=Free(灰), 1=Allocated(绿), 2=Occupied(红)
+        public int SignalAllocationState = -1;  // 信号机自身的 AllocationState: -1=未知 0=Free 1=Allocated 2=Occupied 3=Shunting
+        public int SignalType = -1;        // 信号机类型: 0=Manual 1=Auto 2=Shunting
+        public bool SignalIsPendingRoute;  // 信号机是否有正在等待的进路
+        public int FrontAllocationState = -1;   // 信号机 Front 轨道段分配状态: -1=未知 0=Free 1=Allocated 2=Occupied
         public int RouteTotalSteps;        // 进路总区间数
         public int RouteCurrentStep;       // 当前区间索引
         public int RouteRemainingSteps;    // 剩余区间数

@@ -1,6 +1,6 @@
 # 项目进度
 
-更新时间：2026-07-28
+更新时间：2026-07-29（调度助手迭代）
 
 ## 第一阶段：基础设施
 
@@ -133,24 +133,33 @@
 
 ### 已完成
 
-- [x] BepInEx 插件：Harmony 补丁 `Train.Move` + 后台轮询线程采集数据
+- [x] BepInEx 插件：Harmony 补丁 `Train.Move` 采集数据 + 后台 `PollLoop` 线程兜底（3秒间隔）
+- [x] ReflectCache 反射缓存：所有 Type/Property/Field/Method 只查找一次，避免重复反射开销
 - [x] HTTP 服务器（localhost:8787）提供 JSON API
 - [x] 桌面程序：告警列表 + 列车列表，车次分类着色，智能排序
-- [x] 告警引擎：进路未配置、信号关闭、即将停车、停车超时、发车预告、入图预告
+- [x] 告警引擎：进路未配置、信号关闭、即将停车、停车超时、发车预告、入图预告、进站停车
 - [x] 站台冲突检测：同站同站台，一列在站一列接近时告急
 - [x] 进路相交检测：两列车前方进路轨道段有交集时告急
-- [x] 通过 `TargetSpeed` 判断信号开放/关闭
-- [x] 从信号机 `Front` Connection 获取 `AllocationState`，信号开放但前方轨道 Free(灰) 时提前预警
+- [x] 信号预警：从信号机 `AllocationState` 和 `Front` Connection 判断信号是否开放
+- [x] 信号机详情：读取 `Type`（Manual/Auto/Shunting）、`IsPendingRoute`
 - [x] 从 `ResolvedStep.Destination` Connection 获取轨道标识用于碰撞检测
 - [x] 桌面程序列布局：前方停站与站台号分列显示
+- [x] 告警消息包含站台号（如"-> 南通 2台"）
+- [x] 车次颜色：G/D/C三字/C四字/X/Z/T/K/L/S/数字 各有不同背景色
 - [x] GitHub Actions 工作流编译插件和桌面 exe
+- [x] 已停车列车告警统一用 `TargetSpeed<=0.5` 判断信号关闭（与桌面显示一致），新增"可发车但信号关闭"分支
+- [x] 桌面程序右键菜单：右键点击自动选中行，修复复制选中行无反应问题
 
 ### 已移除
 
 - 旧版进路冲突检测（基于下一站名匹配）：两列列车前往同一站不一定是冲突，
   追踪运行属于正常的进路复用。已替换为基于轨道段交集的碰撞检测。
+- 已停车列车依赖 `SignalAllocationState==0` 判断信号关闭的逻辑：AllocationState
+  可能读取失败(=-1)或与 TargetSpeed 不同步，导致停车告警消失。改为统一用
+  `TargetSpeed<=0.5` 判断。
 
 ### 待验证
 
 - [ ] 在复杂咽喉和多信号区间场景下验证 `AllocationState` 提前预警准确性
 - [ ] 在追踪运行场景下验证碰撞检测不误报
+- [ ] 验证已停车列车告警在南京枢纽等场景下持续显示

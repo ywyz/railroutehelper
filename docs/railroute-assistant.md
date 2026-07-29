@@ -7,8 +7,8 @@ Rail Route Assistant 是一个 BepInEx 插件 + 桌面程序，用于在 Rail Ro
 ```
 Rail Route 游戏 (Unity 进程)
 ├── BepInEx 插件 (RailRouteAssistant.dll, .NET Framework 4.7.2)
-│   ├── Harmony 补丁 Train.Move  ← 列车移动时触发数据采集
-│   ├── 后台轮询线程  ← 每 1 秒自动采集一次
+│   ├── Harmony 补丁 Train.Move  ← 列车移动时触发数据采集（每 1 秒节流）
+│   ├── ReflectCache  ← 反射缓存，所有 Type/Property/Field/Method 只查找一次
 │   ├── 告警引擎 AlertEngine  ← 评估告警规则
 │   └── HTTP 服务器 (localhost:8787)  ← 后台线程提供 JSON 数据
 │
@@ -23,42 +23,46 @@ Rail Route 游戏 (Unity 进程)
 
 - 列车基本信息：车号、速度、目标速度、延误、最大速度
 - 运行状态：是否在线、是否可发车、是否已完成、是否故障
-- 信号状态：前方信号灯状态（开放/关闭/等待/无信号）
+- 信号状态：前方信号机状态（开放/关闭/等待/无信号）
+- 信号机详情：AllocationState、Type（Manual/Auto/Shunting）、IsPendingRoute
+- 前方轨道：Front Connection 的 AllocationState
 - 停车信息：停车原因、停车时长
 - 下一站信息：站名 + 站台号
 
 ### 信号状态
 
-通过 `TargetSpeed` 判断信号开放/关闭：`TargetSpeed > 0` 表示信号开放，`TargetSpeed ≈ 0` 表示信号关闭。
+插件从多个维度判断信号状态：
 
-插件还从信号机的 `Front` Connection 获取前方轨道段的 `AllocationState`：
-- `Free (0)` = 灰色，未配置进路
-- `Allocated (1)` = 绿色，已配置进路
-- `Occupied (2)` = 红色，列车占用
+1. **信号机 AllocationState**：`Free(0)` = 信号未开放，`Allocated(1)` = 信号已开放
+2. **前方轨道 AllocationState**（信号机 Front Connection）：`Free(0)` = 前方轨道未配进路
+3. **列车 TargetSpeed**：`≈0` = 列车已进入制动距离开始减速
 
-当信号开放但前方轨道段为 Free 时，插件发出提前预警，提示玩家在前方信号机处需要配置进路。
+> 注意：`FrontAllocationState == Occupied(2)` 不作为信号关闭的依据，因为列车自己可能就在这段轨道上。
 
 ### 告警规则（当前实现）
 
-告警核心逻辑：**信号关闭时告警**，信号开放时不告警。
+告警核心逻辑：**只在信号确实关闭时告警**，信号开放时不告警，正常进站减速不告警。
 
 #### 运行中列车
 
 | 场景 | 级别 | 触发条件 |
 |------|------|----------|
-| 前方信号开放但前方轨道未配进路 | 警告 | 信号开放、前方轨道 `AllocationState=Free`、列车运行中 |
-| 前方进路未配置 | 紧急 | `LookaheadCount=0`（前方完全无铁轨段） |
-| 前方信号关闭 | 紧急 | 信号未开放 且 速度≤10km/h |
-| 前方信号关闭 | 警告 | 信号未开放 且 速度>10km/h |
-| 即将停车 | 警告 | 速度≤5km/h 且 信号关闭 |
+| 信号关闭但列车尚未减速 | 警告 | 信号机 `AllocationState=Free` 或前方轨道 `Free`，且 `TargetSpeed` 仍正常 |
+| 前方进路未配置 | 紧急 | 信号关闭 且 `LookaheadCount=0`（前方完全无铁轨段） |
+| 前方信号关闭，减速中 | 紧急 | 信号关闭 且 `TargetSpeed≈0` 且 速度>5km/h |
+| 因信号关闭即将停车 | 警告 | 信号关闭 且 `TargetSpeed≈0` 且 速度≤5km/h |
+| 即将进站停车 | 信息 | 减速中 且 `StopReasons` 含 `Station` |
 
 #### 已停车列车
+
+> 信号关闭判断统一使用 `TargetSpeed <= 0.5`，与桌面程序显示逻辑一致；到站停车（`StopReasons` 含 `Station`）不在此告警。
 
 | 场景 | 级别 | 触发条件 |
 |------|------|----------|
 | 可发车但无进路 | 紧急 | `CanDepart=true` 且 `LookaheadCount=0` |
-| 信号关闭导致停车 | 紧急 | 停车 且 信号未开放 |
-| 前方进路未配置 | 紧急 | 停车 且 `LookaheadCount=0` |
+| 可发车但信号关闭 | 紧急 | `CanDepart=true` 且 `TargetSpeed<=0.5` 且 非到站停车 |
+| 信号关闭导致停车 | 紧急 | `CanDepart=false` 且 非到站停车 且 `LookaheadCount>0` |
+| 前方进路未配置 | 紧急 | `CanDepart=false` 且 非到站停车 且 `LookaheadCount=0` |
 | 线路停车超时 | 警告 | 非到站停车超过 10 秒 |
 
 #### 其他告警
@@ -88,19 +92,24 @@ Rail Route 游戏 (Unity 进程)
 ### 右键菜单
 
 在列车列表或告警列表上右键，可：
-- **复制选中行**：复制当前选中的行（Tab 分隔，可粘贴到 Excel）
+- **复制选中行**：复制当前选中的行（Tab 分隔，可粘贴到 Excel）。右键点击时会自动选中点击的行，并通过 `_lastRightClickedList` 记录操作的列表，避免 `Focused` 判断不准导致无反应。
 - **复制全部列车数据**：复制全部列车数据（含表头）
 
 车次背景色：
 
-| 车次前缀 | 背景色 |
-|----------|--------|
-| G（高铁）| 暗红 |
-| D（动车）| 暗蓝 |
-| Z（直达）| 暗绿 |
-| T（特快）| 暗橙 |
-| K（快速）| 暗黄 |
-| 数字 | 默认深灰 |
+| 车次前缀 | 背景色 | 说明 |
+|----------|--------|------|
+| G（高铁）| 暗红 | |
+| D（动车）| 暗蓝 | |
+| C 三字（Cxxx）| 暗绿 | 城际三字车次 |
+| C 四字（Cxxxx）| 暗青 | 城际四字车次 |
+| X（行包）| 暗紫 | |
+| Z（直达）| 暗绿 | |
+| T（特快）| 暗橙 | |
+| K（快速）| 暗黄 | |
+| L（临客）| 暗灰蓝 | |
+| S（市郊）| 暗紫 | |
+| 数字 | 默认深灰 | |
 
 列车行颜色基于信号状态：
 
@@ -169,6 +178,7 @@ Rail Route 游戏 (Unity 进程)
       "needsRoute": true,
       "hasSignal": true,
       "signalState": "Node:Semaphore:320:287",
+      "signalAllocationState": 0,
       "frontAllocationState": 0,
       "platform": 3,
       "nextStation": "南京站",
@@ -179,7 +189,7 @@ Rail Route 游戏 (Unity 进程)
     {
       "level": "warning",
       "train": "1228",
-      "message": "前方信号开放但前方轨道未配进路 速度120km/h 建议提前配置 -> 南京站"
+      "message": "信号未开放 速度120km/h -> 南京站 3台"
     }
   ]
 }
@@ -196,11 +206,9 @@ BepInEx 日志位于：
 
 ### 数据采集方式
 
-插件使用三种方式采集数据：
+插件使用 **Harmony Postfix 补丁** 在 `Train.Move` 方法后触发数据采集，每 1 秒节流一次。所有反射结果（Type/PropertyInfo/FieldInfo/MethodInfo）通过 `ReflectCache` 静态类缓存，只在首次使用时查找一次，后续直接使用缓存值，避免重复反射开销。
 
-1. **Harmony Postfix 补丁** - 在 `Train.Move` 方法后触发，记录列车移动
-2. **后台轮询线程** - 每 1 秒通过反射读取 `TrainRepository.Trains`
-3. **HTTP 服务器** - 在后台线程运行，响应桌面程序请求
+> 兜底机制：另起一个后台线程 `PollLoop`，每 3 秒调用一次 `CollectAllTrains`。当地图上没有列车移动时（`Train.Move` 不触发），仍能采集数据并刷新 `gameReady` 状态，避免桌面程序误报"游戏未就绪"。
 
 ### 关键游戏类型
 
@@ -209,20 +217,37 @@ BepInEx 日志位于：
 | `Game.Train.Train` | 列车主类，包含速度、信号、下一站等 |
 | `Game.Train.TrainRepository` | 列车仓库，`Trains` 属性返回所有列车 |
 | `Game.Schedule.StationVisit` | 站台访问信息，包含 Station 和 PlatformNumber |
-| `Game.Railroad.Semaphore` | 信号机，包含 `Front`(Connection)、`TargetSpeed`、`AllocationState` |
-| `Game.Railroad.Connection` | 轨道段，包含 `AllocationState`(State 枚举) |
+| `Game.Railroad.Semaphore` | 信号机，继承自 Node，有 `AllocationState`、`Type`、`IsPendingRoute`、`Front` |
+| `Game.Railroad.Connection` | 轨道段，继承自 Node，有 `AllocationState`(State 枚举) |
 | `Game.Maintenance.Routes.ServiceRouteRun` | 进路运行，包含 `Steps`(ResolvedStep 列表) |
 | `Game.Maintenance.Routes.ResolvedStep` | 进路步骤，包含 `Destination`(Connection) |
+
+### AllocationState 枚举
+
+| 值 | 名称 | 含义 |
+|----|------|------|
+| 0 | Free | 空闲——未配置进路 |
+| 1 | Allocated | 已分配——已配置进路 |
+| 2 | Occupied | 已占用——列车在该轨道段上 |
+| 3 | Shunting | 调车——调车模式下的特殊占用 |
+
+### SemaphoreType 枚举
+
+| 值 | 名称 | 含义 |
+|----|------|------|
+| 0 | Manual | 手动信号机（玩家直接控制） |
+| 1 | Auto | 自动信号机（需要配进路） |
+| 2 | Shunting | 调车信号机 |
 
 ### 概念说明
 
 - **信号区间** = 两个信号灯（传感器）之间的路
-- **`TargetSpeed > 0`** = 信号开放，列车可继续通行
-- **`TargetSpeed ≈ 0`** = 信号关闭，列车将被迫减速停车
-- **`AllocationState`** = 前方轨道段分配状态：`Free`(0)=灰/未配、`Allocated`(1)=绿/已配、`Occupied`(2)=红/占用
-- **`NeedsRouteAhead`** = 列车前方某处最终需要配置进路（但信号可能仍然开放）
-- **`LookaheadCount`** = 前方铁轨段数（仅用于判断完全无进路的情况）
-- **`PlatformNumber`** = 站台号（如 3台）
+- **信号机 AllocationState=Free** = 信号未开放（无进路通过）
+- **前方轨道 AllocationState=Free** = 前方轨道未配进路
+- **TargetSpeed ≈ 0** = 列车已进入制动距离，开始减速
+- **NeedsRouteAhead** = 列车前方有 Auto 类型信号机但没有 pending route
+- **LookaheadCount** = 前方铁轨段数（仅用于判断完全无进路的情况）
+- **PlatformNumber** = 站台号（如 3台）
 
 ### 进路说明
 
@@ -238,8 +263,8 @@ BepInEx 日志位于：
 
 ```
 RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
-├── Plugin.cs                  # 插件入口，初始化 HTTP 服务器和轮询线程
-├── TrainPatch.cs              # Harmony 补丁，数据采集
+├── Plugin.cs                  # 插件入口，初始化 HTTP 服务器
+├── TrainPatch.cs              # Harmony 补丁 + ReflectCache 反射缓存 + 数据采集
 ├── AlertEngine.cs             # 告警引擎，评估告警规则
 ├── HttpServer.cs              # HTTP 服务器，提供 JSON API
 ├── DataStore.cs               # 数据模型和线程安全存储

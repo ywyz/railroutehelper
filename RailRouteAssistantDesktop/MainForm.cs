@@ -144,12 +144,40 @@ namespace RailRouteAssistantDesktop
 
             _trainList.ContextMenuStrip = copyMenu;
             _alertList.ContextMenuStrip = copyMenu;
+
+            // 右键点击时选中点击的行，并记录当前操作的列表
+            _trainList.MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                {
+                    _lastRightClickedList = _trainList;
+                    var hit = _trainList.HitTest(e.Location);
+                    if (hit.Item != null) hit.Item.Selected = true;
+                }
+            };
+            _alertList.MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                {
+                    _lastRightClickedList = _alertList;
+                    var hit = _alertList.HitTest(e.Location);
+                    if (hit.Item != null) hit.Item.Selected = true;
+                }
+            };
         }
+
+        private ListView _lastRightClickedList;
 
         private void CopySelectedToClipboard()
         {
-            var list = _trainList.Focused ? _trainList : _alertList;
-            if (list.SelectedItems.Count == 0) return;
+            // 优先用右键点击记录的列表，否则取有选中项的列表
+            var list = _lastRightClickedList;
+            if (list == null || list.SelectedItems.Count == 0)
+            {
+                list = _trainList.SelectedItems.Count > 0 ? _trainList :
+                       _alertList.SelectedItems.Count > 0 ? _alertList : null;
+            }
+            if (list == null || list.SelectedItems.Count == 0) return;
 
             var sb = new StringBuilder();
             foreach (ListViewItem item in list.SelectedItems)
@@ -159,7 +187,7 @@ namespace RailRouteAssistantDesktop
                     parts.Add(sub.Text);
                 sb.AppendLine(string.Join("\t", parts));
             }
-            Clipboard.SetText(sb.ToString());
+            try { Clipboard.SetText(sb.ToString()); } catch { }
         }
 
         private void CopyAllToClipboard()
@@ -247,6 +275,9 @@ namespace RailRouteAssistantDesktop
             {
                 'G' => Color.FromArgb(80, 30, 30),   // 高铁 - 暗红
                 'D' => Color.FromArgb(20, 40, 70),   // 动车 - 暗蓝
+                'C' when name.Length <= 4 => Color.FromArgb(20, 60, 30),   // 城际三字 - 暗绿
+                'C' when name.Length >= 5 => Color.FromArgb(20, 50, 55),   // 城际四字 - 暗青
+                'X' => Color.FromArgb(50, 30, 60),   // 行包/直达特快X - 暗紫
                 'Z' => Color.FromArgb(20, 60, 30),   // 直达 - 暗绿
                 'T' => Color.FromArgb(70, 50, 20),   // 特快 - 暗橙
                 'K' => Color.FromArgb(60, 55, 20),   // 快速 - 暗黄

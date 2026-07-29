@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -37,7 +36,7 @@ namespace RailRouteAssistant
             Log.LogInfo($"[{PluginName}] v{PluginVersion} 启动中...");
 
             HttpPort = Config.Bind("General", "HttpPort", 8787, "HTTP 服务端口");
-            UpdateInterval = Config.Bind("General", "UpdateInterval", 0.5f, "数据更新间隔(秒)");
+            UpdateInterval = Config.Bind("General", "UpdateInterval", 1.0f, "数据更新间隔(秒)");
 
             // 应用 Harmony 补丁 - 修改游戏方法的 IL，不依赖 GameObject
             _harmony = new Harmony(PluginGuid);
@@ -54,12 +53,12 @@ namespace RailRouteAssistant
                 }
                 else
                 {
-                    Log.LogWarning("未找到 Train.Move 方法，将仅依赖后台轮询");
+                    Log.LogWarning("未找到 Train.Move 方法");
                 }
             }
             else
             {
-                Log.LogWarning("未找到 Game.Train.Train 类型，将仅依赖后台轮询");
+                Log.LogWarning("未找到 Game.Train.Train 类型");
             }
 
             // 启动 HTTP 服务器（后台线程）
@@ -67,7 +66,7 @@ namespace RailRouteAssistant
             _httpServer.Start();
             Log.LogInfo($"HTTP 服务器已启动: http://localhost:{HttpPort.Value}");
 
-            // 启动后台轮询线程（兜底：即使 Train.Move 没被调用也能采集数据）
+            // 启动后台轮询线程（兜底：Move_Postfix 未被调用时也能采集数据）
             _pollThread = new Thread(PollLoop) { IsBackground = true, Name = "RailRoutePoll" };
             _pollThread.Start();
             Log.LogInfo("后台轮询线程已启动");
@@ -76,7 +75,7 @@ namespace RailRouteAssistant
         }
 
         /// <summary>
-        /// 后台轮询 - 每 1 秒采集一次数据
+        /// 后台轮询 - 每 3 秒采集一次（兜底，Move_Postfix 也会采集但需要列车在移动）
         /// </summary>
         private void PollLoop()
         {
@@ -84,7 +83,7 @@ namespace RailRouteAssistant
             {
                 try
                 {
-                    Thread.Sleep(1000);
+                    Thread.Sleep(3000);
                     TrainPatch.CollectAllTrains();
                 }
                 catch (Exception ex)
@@ -97,7 +96,7 @@ namespace RailRouteAssistant
         private void OnDestroy()
         {
             // 不停止任何东西！GameObject 被销毁是正常的
-            Log.LogInfo($"[{PluginName}] 插件 GameObject 被销毁（补丁、HTTP 服务器、轮询线程继续运行）");
+            Log.LogInfo($"[{PluginName}] 插件 GameObject 被销毁（补丁、HTTP 服务器继续运行）");
         }
     }
 }

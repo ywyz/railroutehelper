@@ -36,32 +36,103 @@ namespace RailRouteAssistant
         private static List<AlertInfo> EvaluateTrain(TrainSnapshot snap)
         {
             var alerts = new List<AlertInfo>();
-            var nextStation = !string.IsNullOrEmpty(snap.NextStationName) ? $" -> {snap.NextStationName}" : "";
+            var platformStr = snap.NextPlatformNumber > 0 ? $" {snap.NextPlatformNumber}台" : "";
+            var nextStation = !string.IsNullOrEmpty(snap.NextStationName) ? $" -> {snap.NextStationName}{platformStr}" : "";
 
-            // 信号状态通过 TargetSpeed 判断（IsActing 不代表开放/关闭）
-            // TargetSpeed > 0 = 信号开放，可以继续走
-            // TargetSpeed ≈ 0 = 信号关闭，需要停车
-            bool signalOpen = snap.TargetSpeed > 0.5f;
-            bool signalClosed = !signalOpen;
-            var sigInfo = signalOpen ? "（信号开放）" : "（信号关闭）";
+            // ========== 信号预警逻辑（两级提前 + 一级临界） ==========
+            //
+            // 时间线：
+            //   t1: 信号机在远处，列车未减速（TargetSpeed ≈ CurrentSpeed）
+            //   t2: 信号机进入制动距离，TargetSpeed 开始下降但仍 > 0
+            //   t3: TargetSpeed ≈ 0，列车大幅减速/停车
+            //
+            // 预警级别：
+            //   warning  - 信号关闭但列车尚未减速（最早反应窗口）
+            //   warning  - TargetSpeed 开始下降（列车即将减速）
+            //   critical - TargetSpeed ≈ 0（列车已在减速/停车）
 
-            // ========== 提前预警：信号开放但前方轨道段未配置进路（灰色） ==========
-            // AllocationState: 0=Free(灰/未配), 1=Allocated(绿/已配), 2=Occupied(红/占用)
-            if (signalOpen && snap.CurrentSpeed > 0 && snap.FrontAllocationState == 0)
+            bool hasSignal = snap.HasActingSignal;
+            bool isRunning = snap.CurrentSpeed > 0;
+            bool trainBraking = snap.TargetSpeed < 0.5f;       // TargetSpeed ≈ 0
+            bool trainSlowing = !trainBraking && snap.TargetSpeed > 0.5f && snap.TargetSpeed < snap.CurrentSpeed - 5; // TargetSpeed 开始下降
+
+            // 信号是否已关闭：仅看信号机自身和前方轨道的 AllocationState
+            // AllocationState: -1=未知, 0=Free, 1=Allocated, 2=Occupied, 3=Shunting
+            // 注意：FrontAllocationState==2(Occupied) 不算信号关闭，因为列车自己可能就在这段轨道上
+            bool signalClosed = false;
+            string signalReason = "";
+            if (hasSignal)
             {
-                alerts.Add(new AlertInfo
+                if (snap.SignalAllocationState == 0)
                 {
-                    Level = "warning",
-                    TrainName = snap.TrainName,
-                    Message = $"前方信号开放但前方轨道未配进路 速度{snap.CurrentSpeed}km/h 建议提前配置{nextStation}",
-                    TimestampMs = NowMs()
-                });
+                    signalClosed = true;
+                    signalReason = "信号未开放";
+                }
+                else if (snap.FrontAllocationState == 0)
+                {
+                    signalClosed = true;
+                    signalReason = "前方轨道未配进路";
+                }
             }
 
-            // ========== 运行中列车 ==========
-            if (snap.CurrentSpeed > 0)
+            if (isRunning)
             {
-                // 前方完全没有铁轨段 = 进路完全未配置
+                // ========== Level 1 (warning): 信号关闭但列车尚未减速 ==========
+                // 信号机 AllocationState=Free 或前方轨道 Free，但列车 TargetSpeed 仍正常
+                // 这是玩家最早的反应窗口
+                if (signalClosed && !trainBraking)
+                {
+                    alerts.Add(new AlertInfo
+                    {
+                        Level = "warning",
+                        TrainName = snap.TrainName,
+                        Message = $"{signalReason} 速度{snap.CurrentSpeed}km/h{nextStation}",
+                        TimestampMs = NowMs()
+                    });
+                }
+
+                // ========== Level 2 (critical): 列车已开始减速且信号确实关闭 ==========
+                // trainBraking = TargetSpeed ≈ 0，说明列车已进入制动距离
+                // 只在信号确实关闭时才报 critical，正常进站减速不报
+                if (trainBraking && signalClosed)
+                {
+                    if (snap.LookaheadCount == 0)
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"前方进路未配置 即将停车{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                    else
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"前方信号关闭！速度{snap.CurrentSpeed}km/h 减速中{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+
+                    // 速度很低 - 即将停车
+                    if (snap.CurrentSpeed <= 5)
+                    {
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "warning",
+                            TrainName = snap.TrainName,
+                            Message = $"因前方信号关闭即将停车{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                }
+            }
+            // ========== 无信号机信息时的回退逻辑 ==========
+            else if (isRunning && !hasSignal && trainBraking)
+            {
                 if (snap.LookaheadCount == 0)
                 {
                     alerts.Add(new AlertInfo
@@ -72,47 +143,35 @@ namespace RailRouteAssistant
                         TimestampMs = NowMs()
                     });
                 }
-                // 信号关闭 = 列车即将被迫减速停车
-                else if (signalClosed)
+                else if (snap.CurrentSpeed <= 10)
                 {
-                    if (snap.CurrentSpeed <= 10)
+                    alerts.Add(new AlertInfo
                     {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = snap.TrainName,
-                            Message = $"前方信号关闭！速度{snap.CurrentSpeed}km/h 即将停车{nextStation}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                    else
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "warning",
-                            TrainName = snap.TrainName,
-                            Message = $"前方信号关闭 速度{snap.CurrentSpeed}km/h 减速中{nextStation}",
-                            TimestampMs = NowMs()
-                        });
-                    }
+                        Level = "critical",
+                        TrainName = snap.TrainName,
+                        Message = $"前方信号关闭 速度{snap.CurrentSpeed}km/h 即将停车{nextStation}",
+                        TimestampMs = NowMs()
+                    });
                 }
-                // 信号开放 = 列车可以继续走，不告警
-
-                // 速度很低且在减速 - 即将停车
-                if (snap.CurrentSpeed <= 5 && signalClosed)
+                else
                 {
                     alerts.Add(new AlertInfo
                     {
                         Level = "warning",
                         TrainName = snap.TrainName,
-                        Message = $"因前方信号关闭即将停车{nextStation}",
+                        Message = $"前方信号关闭 速度{snap.CurrentSpeed}km/h 减速中{nextStation}",
                         TimestampMs = NowMs()
                     });
                 }
             }
             // ========== 已停车列车 ==========
-            else if (!snap.FinishedSchedule)
+            else if (!isRunning && !snap.FinishedSchedule)
             {
+                // 到站停车不告警（由进站提示处理）
+                bool isStationStop = !string.IsNullOrEmpty(snap.StopReasons) && snap.StopReasons.Contains("Station");
+                // 统一用 TargetSpeed<=0.5 判断信号关闭，与桌面程序显示逻辑一致
+                bool stoppedBySignal = snap.TargetSpeed <= 0.5f;
+
                 if (snap.CanDepart && snap.LookaheadCount == 0)
                 {
                     alerts.Add(new AlertInfo
@@ -123,20 +182,21 @@ namespace RailRouteAssistant
                         TimestampMs = NowMs()
                     });
                 }
-                else if (!snap.CanDepart)
+                else if (snap.CanDepart && stoppedBySignal && !isStationStop)
                 {
-                    // 非到站停车 - 信号关闭导致停车
-                    if (signalClosed && snap.HasActingSignal)
+                    // 可发车时刻已到但信号关闭
+                    alerts.Add(new AlertInfo
                     {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = snap.TrainName,
-                            Message = $"已停车 - 前方信号关闭{nextStation}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-                    else if (snap.LookaheadCount == 0)
+                        Level = "critical",
+                        TrainName = snap.TrainName,
+                        Message = $"已停车 - 前方信号关闭{nextStation}",
+                        TimestampMs = NowMs()
+                    });
+                }
+                else if (!snap.CanDepart && !isStationStop)
+                {
+                    // 非到站停车且不能发车 - 信号/进路问题导致停车
+                    if (snap.LookaheadCount == 0)
                     {
                         alerts.Add(new AlertInfo
                         {
@@ -148,24 +208,45 @@ namespace RailRouteAssistant
                     }
                     else
                     {
-                        // 停车超时
-                        if (snap.NotMovingSinceTimestamp.HasValue)
+                        alerts.Add(new AlertInfo
                         {
-                            var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - snap.NotMovingSinceTimestamp.Value;
-                            if (stoppedSec > 10)
-                            {
-                                var reason = !string.IsNullOrEmpty(snap.StopReasons) ? snap.StopReasons : "未知";
-                                alerts.Add(new AlertInfo
-                                {
-                                    Level = "warning",
-                                    TrainName = snap.TrainName,
-                                    Message = $"线路停车{stoppedSec}s（{reason}）{nextStation}",
-                                    TimestampMs = NowMs()
-                                });
-                            }
-                        }
+                            Level = "critical",
+                            TrainName = snap.TrainName,
+                            Message = $"已停车 - 前方信号关闭{nextStation}",
+                            TimestampMs = NowMs()
+                        });
                     }
                 }
+                else if (!isStationStop && snap.NotMovingSinceTimestamp.HasValue)
+                {
+                    // 其他非到站停车 - 停车超时告警
+                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - snap.NotMovingSinceTimestamp.Value;
+                    if (stoppedSec > 10)
+                    {
+                        var reason = !string.IsNullOrEmpty(snap.StopReasons) ? snap.StopReasons : "未知";
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "warning",
+                            TrainName = snap.TrainName,
+                            Message = $"线路停车{stoppedSec}s（{reason}）{nextStation}",
+                            TimestampMs = NowMs()
+                        });
+                    }
+                }
+            }
+
+            // ========== 进站停车提示 ==========
+            // 列车正在减速且停车原因是进站 -> info 级提示
+            if (isRunning && (trainSlowing || trainBraking) &&
+                !string.IsNullOrEmpty(snap.StopReasons) && snap.StopReasons.Contains("Station"))
+            {
+                alerts.Add(new AlertInfo
+                {
+                    Level = "info",
+                    TrainName = snap.TrainName,
+                    Message = $"即将进站停车{nextStation}",
+                    TimestampMs = NowMs()
+                });
             }
 
             // ========== 发车预告 ==========
