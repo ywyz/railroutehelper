@@ -77,10 +77,13 @@ namespace RailRouteAssistant
 
             if (isRunning)
             {
+                // 到站减速不告警（由进站提示处理）
+                bool isStationStop = !string.IsNullOrEmpty(snap.StopReasons) && snap.StopReasons.Contains("Station");
+
                 // ========== Level 1 (warning): 信号关闭但列车尚未减速 ==========
                 // 信号机 AllocationState=Free 或前方轨道 Free，但列车 TargetSpeed 仍正常
-                // 这是玩家最早的反应窗口
-                if (signalClosed && !trainBraking)
+                // 这是玩家最早的反应窗口（仅当 AllocationState 可读时生效）
+                if (signalClosed && !trainBraking && !trainSlowing)
                 {
                     alerts.Add(new AlertInfo
                     {
@@ -91,10 +94,22 @@ namespace RailRouteAssistant
                     });
                 }
 
-                // ========== Level 2 (critical): 列车已开始减速且信号确实关闭 ==========
-                // trainBraking = TargetSpeed ≈ 0，说明列车已进入制动距离
-                // 只在信号确实关闭时才报 critical，正常进站减速不报
-                if (trainBraking && signalClosed)
+                // ========== Level 2 (warning): 列车开始降速（TargetSpeed 下降但仍 > 0）==========
+                // 这是降速早期，玩家还有时间反应。排除到站减速。直接提示即将停车。
+                if (trainSlowing && !isStationStop)
+                {
+                    alerts.Add(new AlertInfo
+                    {
+                        Level = "warning",
+                        TrainName = snap.TrainName,
+                        Message = $"前方信号关闭 即将停车 速度{snap.CurrentSpeed}km/h{nextStation}",
+                        TimestampMs = NowMs()
+                    });
+                }
+
+                // ========== Level 3 (critical): 列车已制动（TargetSpeed ≈ 0）==========
+                // 排除到站减速。不依赖 signalClosed，统一用 TargetSpeed<=0.5 判断。
+                if (trainBraking && !isStationStop)
                 {
                     if (snap.LookaheadCount == 0)
                     {
@@ -112,19 +127,7 @@ namespace RailRouteAssistant
                         {
                             Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"前方信号关闭！速度{snap.CurrentSpeed}km/h 减速中{nextStation}",
-                            TimestampMs = NowMs()
-                        });
-                    }
-
-                    // 速度很低 - 即将停车
-                    if (snap.CurrentSpeed <= 5)
-                    {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "warning",
-                            TrainName = snap.TrainName,
-                            Message = $"因前方信号关闭即将停车{nextStation}",
+                            Message = $"前方信号关闭 即将停车 速度{snap.CurrentSpeed}km/h{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -283,6 +286,7 @@ namespace RailRouteAssistant
         /// <summary>
         /// 站台冲突检测：两列车前往同一站同一站台
         /// 仅限下一站；若一辆已出站（下一站已变）则不会匹配
+        /// 注意：线路两端/出入图方向的站（站名含"方向"）不报，只有中间停车站才报
         /// </summary>
         private static List<AlertInfo> DetectPlatformConflicts(List<TrainSnapshot> trains)
         {
@@ -301,6 +305,9 @@ namespace RailRouteAssistant
                     if (a.NextStationName != b.NextStationName) continue;
                     if (a.NextPlatformNumber <= 0 || a.NextPlatformNumber != b.NextPlatformNumber)
                         continue;
+
+                    // 方向站（线路两端/出入图方向，站名含"方向"）不报站台冲突
+                    if (a.NextStationName.Contains("方向")) continue;
 
                     // 一辆在站内停车（speed=0），另一辆正在运行（speed>0）-> 紧急
                     bool aStopped = a.CurrentSpeed == 0;

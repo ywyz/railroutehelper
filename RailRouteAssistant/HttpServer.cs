@@ -127,7 +127,9 @@ namespace RailRouteAssistant
                 sb.Append("\"routeRemain\":").Append(s.RouteRemainingSteps).Append(",");
                 sb.Append("\"platform\":").Append(s.NextPlatformNumber).Append(",");
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
-                sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons));
+                sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
+                sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null");
                 sb.Append("}");
             }
             sb.Append("],");

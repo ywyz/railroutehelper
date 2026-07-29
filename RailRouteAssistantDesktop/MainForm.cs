@@ -51,11 +51,31 @@ namespace RailRouteAssistantDesktop
             Opacity = 0.95;
             BackColor = ColorBg;
 
-            // WinForms Dock 规则：后添加的控件先 Dock
-            // 所以添加顺序：Fill -> Top -> Top -> Bottom -> Top
-            // 最终效果从上到下：statusLabel, alertList(Top), trainList(Fill), statsLabel(Bottom)
+            // WinForms Dock 规则：Dock=Top 的控件按"添加顺序"从顶部依次向下堆叠
+            // Dock=Fill 填充所有 Top/Bottom 排列后的剩余中间空间
+            //
+            // 期望布局从上到下：statusLabel, trainHeader, trainList(Fill), alertHeader, alertList, statsLabel
+            // 因此添加顺序：statusLabel, trainHeader, trainList(Fill), alertHeader, alertList, statsLabel
 
-            // 1. trainList - Dock=Fill（最先添加，最后 Dock，填充剩余空间）
+            // 先创建所有控件
+            _statusLabel = new Label
+            {
+                Dock = DockStyle.Top, Height = 24,
+                Text = "  正在连接游戏...",
+                ForeColor = Color.Gray, BackColor = ColorPanel,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(8, 0, 0, 0),
+                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold)
+            };
+
+            var trainHeader = new Label
+            {
+                Dock = DockStyle.Top, Height = 22,
+                Text = "  所有列车",
+                ForeColor = Color.LightSkyBlue, BackColor = ColorPanel,
+                Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold)
+            };
+
             _trainList = new ListView
             {
                 Dock = DockStyle.Fill,
@@ -66,29 +86,26 @@ namespace RailRouteAssistantDesktop
                 ForeColor = Color.White,
                 Font = new Font("Microsoft YaHei UI", 8.5F)
             };
-            _trainList.Columns.Add("车号", 60);
+            _trainList.Columns.Add("车号", 75);
             _trainList.Columns.Add("km/h", 40);
             _trainList.Columns.Add("延误", 45);
-            _trainList.Columns.Add("信号", 80);
-            _trainList.Columns.Add("状态", 80);
-            _trainList.Columns.Add("前方停站", 100);
-            _trainList.Columns.Add("站台", 45);
-            Controls.Add(_trainList);
+            _trainList.Columns.Add("信号", 50);
+            _trainList.Columns.Add("状态", 100);
+            _trainList.Columns.Add("前方停站", 90);
+            _trainList.Columns.Add("站台", 40);
+            _trainList.Columns.Add("转向", 40);
 
-            // 2. trainHeader - Dock=Top
-            var trainHeader = new Label
+            var alertHeader = new Label
             {
                 Dock = DockStyle.Top, Height = 22,
-                Text = "  所有列车",
+                Text = "  告警信息（按紧急程度排序）",
                 ForeColor = Color.LightSkyBlue, BackColor = ColorPanel,
                 Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold)
             };
-            Controls.Add(trainHeader);
 
-            // 3. alertList - Dock=Top（固定高度）
             _alertList = new ListView
             {
-                Dock = DockStyle.Top, Height = 250,
+                Dock = DockStyle.Top, Height = 180,
                 View = View.Details,
                 FullRowSelect = true,
                 BackColor = ColorBg,
@@ -97,31 +114,7 @@ namespace RailRouteAssistantDesktop
                 HeaderStyle = ColumnHeaderStyle.None
             };
             _alertList.Columns.Add("告警", 500);
-            Controls.Add(_alertList);
 
-            // 4. alertHeader - Dock=Top
-            var alertHeader = new Label
-            {
-                Dock = DockStyle.Top, Height = 22,
-                Text = "  告警信息（按紧急程度排序）",
-                ForeColor = Color.LightSkyBlue, BackColor = ColorPanel,
-                Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold)
-            };
-            Controls.Add(alertHeader);
-
-            // 5. statusLabel - Dock=Top
-            _statusLabel = new Label
-            {
-                Dock = DockStyle.Top, Height = 24,
-                Text = "  正在连接游戏...",
-                ForeColor = Color.Gray, BackColor = ColorPanel,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(8, 0, 0, 0),
-                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold)
-            };
-            Controls.Add(_statusLabel);
-
-            // 6. statsLabel - Dock=Bottom
             _statsLabel = new Label
             {
                 Dock = DockStyle.Bottom, Height = 20,
@@ -130,7 +123,21 @@ namespace RailRouteAssistantDesktop
                 Padding = new Padding(0, 0, 8, 0),
                 Font = new Font("Microsoft YaHei UI", 8F)
             };
-            Controls.Add(_statsLabel);
+
+            // WinForms Dock 规则：z-order 由 Controls 集合 index 决定
+            // index 大的先处理 Dock（先占据位置），index 小的后处理
+            // 即 Controls.Add 顺序的反序 = Dock 处理顺序
+            //
+            // 期望布局从上到下：statusLabel, trainHeader, trainList(Fill), alertHeader, alertList, statsLabel
+            // Dock 处理顺序（从上到下）：statusLabel, trainHeader, alertHeader, alertList, statsLabel, trainList(Fill 最后填剩余)
+            // 因此 Add 顺序（反序）：trainList(Fill先add,最后处理), statsLabel, alertList, alertHeader, trainHeader, statusLabel
+
+            Controls.Add(_trainList);       // Fill - index 0，最后处理，填充剩余
+            Controls.Add(_statsLabel);      // Bottom
+            Controls.Add(_alertList);       // Top
+            Controls.Add(alertHeader);      // Top
+            Controls.Add(trainHeader);      // Top
+            Controls.Add(_statusLabel);     // Top - index 最大，最先处理，最顶部
 
             // 右键菜单 - 复制
             var copyMenu = new ContextMenuStrip();
@@ -247,7 +254,9 @@ namespace RailRouteAssistantDesktop
                             SignalState = t.GetProperty("signalState").GetString() ?? "",
                             Platform = t.GetProperty("platform").GetInt32(),
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
-                            StopReasons = t.GetProperty("stopReasons").GetString() ?? ""
+                            StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
+                            NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
+                            NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null
                         });
 
                 UpdateUI();
@@ -358,26 +367,65 @@ namespace RailRouteAssistantDesktop
         private ListViewItem CreateTrainItem(TrainData t)
         {
             var item = new ListViewItem(t.Name);
-            item.SubItems.Add("");
-            item.SubItems.Add("");
-            item.SubItems.Add("");
-            item.SubItems.Add("");
-            item.SubItems.Add("");
-            item.SubItems.Add("");
+            item.SubItems.Add(""); // km/h
+            item.SubItems.Add(""); // 延误
+            item.SubItems.Add(""); // 信号
+            item.SubItems.Add(""); // 状态
+            item.SubItems.Add(""); // 前方停站
+            item.SubItems.Add(""); // 站台
+            item.SubItems.Add(""); // 转向
             UpdateTrainItem(item, t);
             return item;
+        }
+
+        /// <summary>
+        /// 检测合并车号（如 G3342G3343，两个车次拼在一起，需要中途换向）
+        /// </summary>
+        private static bool IsMergedTrainNumber(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length < 4) return false;
+            // 匹配：字母+数字+字母+数字 的模式
+            int letterCount = 0;
+            for (int i = 0; i < name.Length; i++)
+            {
+                if (char.IsLetter(name[i])) letterCount++;
+            }
+            return letterCount >= 2;
         }
 
         private void UpdateTrainItem(ListViewItem item, TrainData t)
         {
             var delayStr = t.Delay > 0 ? $"+{(int)t.Delay}s" : t.Delay < 0 ? $"{(int)t.Delay}s" : "";
 
+            // 状态：停站状态 + 发车倒计时
             var statusParts = new List<string>();
             if (t.Waiting) statusParts.Add("等待入图");
             if (t.BrokenDown) statusParts.Add("故障");
-            if (t.CanDepart) statusParts.Add("可发车");
             if (t.Finished) statusParts.Add("完成");
-            if (t.OnBoard && t.Speed == 0 && !t.CanDepart && !t.Finished) statusParts.Add("停车");
+
+            bool isStationStop = t.OnBoard && t.Speed == 0 && !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+            if (isStationStop)
+            {
+                statusParts.Add("停站");
+                // 显示发车倒计时（NextPrepareSec 为剩余秒数）
+                if (t.NextPrepareSec.HasValue && t.NextPrepareSec.Value > 0)
+                {
+                    var ts = TimeSpan.FromSeconds(t.NextPrepareSec.Value);
+                    if (ts.TotalMinutes >= 1)
+                        statusParts.Add($"{(int)ts.TotalMinutes}分{ts.Seconds}秒发车");
+                    else
+                        statusParts.Add($"{ts.Seconds}秒发车");
+                }
+            }
+            else if (t.CanDepart)
+            {
+                statusParts.Add("可发车");
+            }
+            else if (t.OnBoard && t.Speed == 0 && !t.Finished)
+            {
+                statusParts.Add("停车");
+            }
+
             var status = string.Join(" ", statusParts);
 
             var signalStr = !t.OnBoard ? "" :
@@ -388,6 +436,9 @@ namespace RailRouteAssistantDesktop
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? t.NextStation : "";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
+            // 转向：合并车号需要转向
+            var turnStr = IsMergedTrainNumber(t.Name) ? "需转向" : "";
+
             item.Text = t.Name;
             item.SubItems[1].Text = $"{t.Speed}";
             item.SubItems[2].Text = delayStr;
@@ -395,6 +446,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems[4].Text = status;
             item.SubItems[5].Text = stationStr;
             item.SubItems[6].Text = platformStr;
+            item.SubItems[7].Text = turnStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
@@ -439,5 +491,7 @@ namespace RailRouteAssistantDesktop
         public int Lookahead; public bool NeedsRoute;
         public bool HasSignal; public string SignalState;
         public int Platform; public string NextStation; public string StopReasons;
+        public double? NextPrepareSec;  // 下一站发车准备时间（秒）
+        public double? NextArrivalSec;  // 下一站到达时间（秒）
     }
 }
