@@ -24,6 +24,14 @@ namespace RailRouteAssistant
         // Ctx.Deps
         internal static MethodInfo CtxDepsGetter;
 
+        // 游戏时间访问链：Ctx.Deps(Game.Context.IControllers) -> GameControllers(Game.IGameControllers) -> TimeController(Game.Time.ITimeController) -> CurrentTime(TimeSpan)
+        internal static Type IControllersType;
+        internal static Type IGameControllersType;
+        internal static Type ITimeControllerType;
+        internal static PropertyInfo IControllersGameControllers;
+        internal static PropertyInfo GameControllersTimeController;
+        internal static PropertyInfo TimeControllerCurrentTime;
+
         // Train 属性 getter
         internal static PropertyInfo TrainCurrentSpeed, TrainMaxSpeed, TrainTargetSpeed, TrainDelay;
         internal static PropertyInfo TrainCanDepart, TrainFinished, TrainBrokenDown, TrainOnBoard, TrainDisposed;
@@ -129,7 +137,19 @@ namespace RailRouteAssistant
                 if (TimeType != null)
                     TimeGetter = AccessTools.PropertyGetter(TimeType, "time");
 
-                Plugin.Log.LogInfo($"[ReflectCache] 初始化完成: Ctx={CtxType!=null}, Train={TrainType!=null}, Sem={SemaphoreType!=null}");
+                // 游戏时间访问链
+                IControllersType = AccessTools.TypeByName("Game.Context.IControllers");
+                IGameControllersType = AccessTools.TypeByName("Game.IGameControllers");
+                ITimeControllerType = AccessTools.TypeByName("Game.Time.ITimeController");
+                var ifBf = BindingFlags.Public | BindingFlags.Instance;
+                if (IControllersType != null)
+                    IControllersGameControllers = IControllersType.GetProperty("GameControllers", ifBf);
+                if (IGameControllersType != null)
+                    GameControllersTimeController = IGameControllersType.GetProperty("TimeController", ifBf);
+                if (ITimeControllerType != null)
+                    TimeControllerCurrentTime = ITimeControllerType.GetProperty("CurrentTime", ifBf);
+
+                Plugin.Log.LogInfo($"[ReflectCache] 初始化完成: Ctx={CtxType!=null}, Train={TrainType!=null}, Sem={SemaphoreType!=null}, Time={ITimeControllerType!=null}");
                 _initFailed = (TrainType == null);
                 return !_initFailed;
             }
@@ -280,8 +300,12 @@ namespace RailRouteAssistant
                 {
                     LogDiag("Ctx.Deps 为 null（游戏未进入地图）");
                     DataStore.UpdateSnapshots(new List<TrainSnapshot>(), new List<AlertInfo>(), false);
+                    DataStore.UpdateGameTime(null);
                     return;
                 }
+
+                // 读取游戏内模拟时钟：Ctx.Deps -> GameControllers -> TimeController -> CurrentTime(TimeSpan)
+                DataStore.UpdateGameTime(TryGetGameTime(controllers));
 
                 // TrainRepository
                 var trGetter = AccessTools.PropertyGetter(controllers.GetType(), "TrainRepository");
@@ -344,6 +368,31 @@ namespace RailRouteAssistant
                     : Environment.TickCount / 1000f;
             }
             catch { return Environment.TickCount / 1000f; }
+        }
+
+        /// <summary>
+        /// 读取游戏内模拟时钟：Ctx.Deps(IControllers) -> GameControllers(IGameControllers) -> TimeController(ITimeController) -> CurrentTime(TimeSpan)
+        /// 返回 TotalSeconds，失败返回 null
+        /// </summary>
+        private static double? TryGetGameTime(object controllers)
+        {
+            try
+            {
+                if (controllers == null) return null;
+                if (ReflectCache.IControllersGameControllers == null ||
+                    ReflectCache.GameControllersTimeController == null ||
+                    ReflectCache.TimeControllerCurrentTime == null) return null;
+
+                var gameControllers = ReflectCache.IControllersGameControllers.GetValue(controllers, null);
+                if (gameControllers == null) return null;
+
+                var timeController = ReflectCache.GameControllersTimeController.GetValue(gameControllers, null);
+                if (timeController == null) return null;
+
+                var ct = ReflectCache.TimeControllerCurrentTime.GetValue(timeController, null) as TimeSpan?;
+                return ct.HasValue ? ct.Value.TotalSeconds : (double?)null;
+            }
+            catch { return null; }
         }
 
         private static TrainSnapshot SnapshotTrain(object train)

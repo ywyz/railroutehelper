@@ -84,12 +84,41 @@ Rail Route 游戏 (Unity 进程)
 列车列表列：`车号 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台 | 转向`
 
 - **信号列**：显示开放/关闭/无信号
-- **状态列**：显示停车/停站/可发车/等待入图/故障/完成，停站时附带发车倒计时（如"停站 2分30秒发车"）
+- **状态列**：显示运行中/停站/可发车/停车/等待入图/故障/完成
+  - 运行中：在线且速度 > 0
+  - 停站：到站停车（`StopReasons` 含 `Station`），附带停车时长和发车倒计时，如 `停站 已停2分15秒 1分30秒发车`
+  - 停车：非到站停车，附带停车时长，如 `停车 已停15秒`
+  - 可发车：达到发车条件但未启动
 - **前方停站列**：仅显示站名
 - **站台列**：显示站台号（如 `3台`）
 - **转向列**：合并车号（如 `G3342G3343`，含2个以上字母）显示"需转向"
 
 列车排序优先级：故障 > 运行中 > 在线停车 > 在线其他 > 等待入图 > 其他 > 已完成
+
+### 状态栏
+
+顶部状态栏显示游戏连接状态与游戏内模拟时钟：
+
+```
+游戏时间 14:30:25  |  已连接  |  在线 5  等待 2  总计 12
+```
+
+游戏时间来自插件读取的 `Game.Time.ITimeController.CurrentTime`（TimeSpan），格式为 HH:MM:SS。游戏未就绪或读取失败时不显示该字段。
+
+### 告警交互
+
+- **点击告警条目**：在列车列表中定位并高亮对应车次，自动滚动到可见位置，焦点切换到列车列表
+- 站台冲突/进路相交类告警的车次形如 `G123/G456`，点击时取第一个车次定位
+- 列车列表每秒刷新会保留当前选中行，避免刷新清掉刚定位的车次
+
+### 窗口置顶
+
+桌面程序默认 `TopMost = true` 浮在游戏窗口上方。为避免被游戏窗口遮挡：
+
+- 失去焦点（`Deactivate`）时通过 `BeginInvoke` 切换 `TopMost = false → true` 重新置顶，不抢焦点、不干扰游戏操作
+- 每秒刷新数据时检查并维持 `TopMost` 状态
+
+> 注意：游戏以**独占全屏**运行时，Windows 不允许任何窗口显示在其上，这不是 `TopMost` 能解决的。请将 Rail Route 设为**窗口模式**或**无边框窗口模式**，桌面助手才能稳定浮在游戏上方。
 
 ### 右键菜单
 
@@ -162,7 +191,9 @@ Rail Route 游戏 (Unity 进程)
 ```json
 {
   "gameReady": true,
+  "lastUpdate": "14:30:25",
   "serverTime": "14:30:25",
+  "gameTime": "14:30:25",
   "trains": [
     {
       "name": "1228",
@@ -182,11 +213,15 @@ Rail Route 游戏 (Unity 进程)
       "signalState": "Node:Semaphore:320:287",
       "signalAllocationState": 0,
       "frontAllocationState": 0,
+      "routeTotal": 5,
+      "routeCur": 1,
+      "routeRemain": 3,
       "platform": 3,
       "nextStation": "南京站",
       "stopReasons": "",
       "nextPrepareSec": 150,
-      "nextArrivalSec": 300
+      "nextArrivalSec": 300,
+      "notMovingSince": null
     }
   ],
   "alerts": [
@@ -198,6 +233,15 @@ Rail Route 游戏 (Unity 进程)
   ]
 }
 ```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
+| `nextPrepareSec` | number \| null | 下一站发车准备剩余秒数（停站时为发车倒计时，等待入图时为入图倒计时） |
+| `nextArrivalSec` | number \| null | 下一站到达剩余秒数 |
+| `notMovingSince` | number \| null | 列车停车起始 unix 时间戳（秒），桌面端据此计算"已停 X 分 Y 秒" |
 
 ## 日志
 
@@ -225,6 +269,21 @@ BepInEx 日志位于：
 | `Game.Railroad.Connection` | 轨道段，继承自 Node，有 `AllocationState`(State 枚举) |
 | `Game.Maintenance.Routes.ServiceRouteRun` | 进路运行，包含 `Steps`(ResolvedStep 列表) |
 | `Game.Maintenance.Routes.ResolvedStep` | 进路步骤，包含 `Destination`(Connection) |
+| `Game.Context.Ctx` | 静态服务定位入口，`Deps` 返回 `IControllers` |
+| `Game.Context.IControllers` | 控制器集合，`GameControllers` 返回 `IGameControllers` |
+| `Game.IGameControllers` | 游戏控制器集合，`TimeController` 返回 `ITimeController` |
+| `Game.Time.ITimeController` | 游戏时钟，`CurrentTime` 返回 `TimeSpan`（游戏内模拟时间） |
+
+### 游戏内时间访问链
+
+```
+Game.Context.Ctx.Deps                       // static，返回 Game.Context.IControllers
+              .GameControllers               // 返回 Game.IGameControllers
+              .TimeController                // 返回 Game.Time.ITimeController
+              .CurrentTime                   // System.TimeSpan  ← 游戏内模拟时钟
+```
+
+`ITimeController` 其他可用属性：`RealPlayTime`（真实游玩时长）、`TimeMultiplier`（时间倍速）、`Paused`/`Stopped`。本项目仅读取 `CurrentTime`，不调用任何会改变游戏状态的方法。
 
 ### AllocationState 枚举
 

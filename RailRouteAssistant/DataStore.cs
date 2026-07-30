@@ -61,6 +61,7 @@ namespace RailRouteAssistant
         private static List<AlertInfo> _alerts = new List<AlertInfo>();
         private static DateTime _lastUpdate = DateTime.MinValue;
         private static bool _gameReady = false;
+        private static double? _gameTimeSeconds = null;  // 游戏内模拟时钟（TimeSpan.TotalSeconds）
 
         public static void UpdateSnapshots(List<TrainSnapshot> snapshots, List<AlertInfo> alerts, bool gameReady)
         {
@@ -73,12 +74,24 @@ namespace RailRouteAssistant
             }
         }
 
+        /// <summary>更新游戏内时间（秒），由采集线程调用</summary>
+        public static void UpdateGameTime(double? seconds)
+        {
+            lock (_lock) { _gameTimeSeconds = seconds; }
+        }
+
         public static (List<TrainSnapshot> snapshots, List<AlertInfo> alerts, DateTime lastUpdate, bool gameReady) GetCurrent()
         {
             lock (_lock)
             {
                 return (new List<TrainSnapshot>(_snapshots), new List<AlertInfo>(_alerts), _lastUpdate, _gameReady);
             }
+        }
+
+        /// <summary>获取游戏内时间（TimeSpan.TotalSeconds），可能为 null</summary>
+        public static double? GetGameTimeSeconds()
+        {
+            lock (_lock) { return _gameTimeSeconds; }
         }
     }
 }

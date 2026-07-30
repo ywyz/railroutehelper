@@ -22,6 +22,8 @@ namespace RailRouteAssistantDesktop
         private List<AlertData> _alerts = new();
         private List<TrainData> _trains = new();
         private bool _gameReady = false;
+        private string _gameTime = "";                  // 游戏内模拟时钟 HH:MM:SS
+        private readonly HashSet<string> _selectedTrainNames = new();  // refresh 间保留的选中车号
 
         private static readonly Color ColorCritical = Color.FromArgb(220, 50, 50);
         private static readonly Color ColorWarning = Color.FromArgb(230, 150, 30);
@@ -90,7 +92,7 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("km/h", 40);
             _trainList.Columns.Add("延误", 45);
             _trainList.Columns.Add("信号", 50);
-            _trainList.Columns.Add("状态", 100);
+            _trainList.Columns.Add("状态", 150);
             _trainList.Columns.Add("前方停站", 90);
             _trainList.Columns.Add("站台", 40);
             _trainList.Columns.Add("转向", 40);
@@ -171,6 +173,65 @@ namespace RailRouteAssistantDesktop
                     if (hit.Item != null) hit.Item.Selected = true;
                 }
             };
+
+            // 点击告警条目 -> 定位并高亮列车列表中对应车次
+            _alertList.MouseClick += (s, e) =>
+            {
+                var hit = _alertList.HitTest(e.Location);
+                if (hit?.Item == null) return;
+                var tag = hit.Item.Tag as string;
+                if (string.IsNullOrEmpty(tag)) return;
+                // 站台冲突/进路相交的告警 TrainName 形如 "G123/G456"，取第一个
+                var firstName = tag.Split('/')[0].Trim();
+                SelectTrainInList(firstName);
+            };
+
+            // 失去焦点时恢复置顶（避免被游戏窗口盖住）
+            Deactivate += (s, e) =>
+            {
+                if (IsDisposed) return;
+                BeginInvoke(new Action(() =>
+                {
+                    if (IsDisposed) return;
+                    TopMost = false;
+                    TopMost = true;
+                }));
+            };
+        }
+
+        /// <summary>
+        /// 在列车列表中查找指定车号并选中+滚动到可见
+        /// </summary>
+        private void SelectTrainInList(string trainName)
+        {
+            if (string.IsNullOrEmpty(trainName)) return;
+            _trainList.BeginUpdate();
+            try
+            {
+                // 清除现有选中
+                foreach (ListViewItem it in _trainList.SelectedItems)
+                    it.Selected = false;
+
+                bool found = false;
+                foreach (ListViewItem it in _trainList.Items)
+                {
+                    if (it.Text == trainName)
+                    {
+                        it.Selected = true;
+                        it.Focused = true;
+                        it.EnsureVisible();
+                        found = true;
+                        break;
+                    }
+                }
+                if (found)
+                {
+                    _trainList.Focus();
+                    _selectedTrainNames.Clear();
+                    _selectedTrainNames.Add(trainName);
+                }
+            }
+            finally { _trainList.EndUpdate(); }
         }
 
         private ListView _lastRightClickedList;
@@ -224,6 +285,12 @@ namespace RailRouteAssistantDesktop
 
                 _gameReady = root.GetProperty("gameReady").GetBoolean();
 
+                // 游戏内时间
+                if (root.TryGetProperty("gameTime", out var gtEl) && gtEl.ValueKind == JsonValueKind.String)
+                    _gameTime = gtEl.GetString() ?? "";
+                else
+                    _gameTime = "";
+
                 _alerts.Clear();
                 if (root.TryGetProperty("alerts", out var alertsEl))
                     foreach (var a in alertsEl.EnumerateArray())
@@ -256,10 +323,14 @@ namespace RailRouteAssistantDesktop
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
                             NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
-                            NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null
+                            NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
+                            NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null
                         });
 
                 UpdateUI();
+
+                // 周期性维持置顶：游戏窗口偶尔会盖住本窗口，每秒检查一次
+                if (!TopMost) TopMost = true;
             }
             catch (HttpRequestException)
             {
@@ -323,7 +394,8 @@ namespace RailRouteAssistantDesktop
             }
             else
             {
-                _statusLabel.Text = $"  已连接  |  在线 {onBoard}  等待 {waiting}  总计 {_trains.Count}";
+                var timeStr = !string.IsNullOrEmpty(_gameTime) ? $"游戏时间 {_gameTime}  |  " : "";
+                _statusLabel.Text = $"  {timeStr}已连接  |  在线 {onBoard}  等待 {waiting}  总计 {_trains.Count}";
                 _statusLabel.ForeColor = Color.LightGreen;
             }
 
@@ -333,7 +405,7 @@ namespace RailRouteAssistantDesktop
             int info = _alerts.FindAll(a => a.Level == "info").Count;
             _statsLabel.Text = $"  紧急 {crit}   警告 {warn}   信息 {info}   ";
 
-            // 告警列表
+            // 告警列表（每个 item 的 Tag 存车号，用于点击定位）
             _alertList.BeginUpdate();
             _alertList.Items.Clear();
             foreach (var a in _alerts)
@@ -346,6 +418,7 @@ namespace RailRouteAssistantDesktop
                     "warning" => ColorWarning,
                     _ => ColorInfo
                 };
+                item.Tag = a.TrainName ?? "";
                 _alertList.Items.Add(item);
             }
             if (_alerts.Count == 0)
@@ -355,12 +428,25 @@ namespace RailRouteAssistantDesktop
             }
             _alertList.EndUpdate();
 
-            // 列车列表 - 排序后重建（顺序会变化）
+            // 列车列表 - 排序后重建（顺序会变化）；保留选中车号
             _trains.Sort((a, b) => TrainSortPriority(a).CompareTo(TrainSortPriority(b)));
+
+            // 记录当前选中的车号，重建后恢复
+            _selectedTrainNames.Clear();
+            foreach (ListViewItem sel in _trainList.SelectedItems)
+                if (!string.IsNullOrEmpty(sel.Text)) _selectedTrainNames.Add(sel.Text);
+
             _trainList.BeginUpdate();
             _trainList.Items.Clear();
             foreach (var t in _trains)
-                _trainList.Items.Add(CreateTrainItem(t));
+            {
+                var item = CreateTrainItem(t);
+                if (_selectedTrainNames.Contains(t.Name))
+                {
+                    item.Selected = true;
+                }
+                _trainList.Items.Add(item);
+            }
             _trainList.EndUpdate();
         }
 
@@ -397,16 +483,30 @@ namespace RailRouteAssistantDesktop
         {
             var delayStr = t.Delay > 0 ? $"+{(int)t.Delay}s" : t.Delay < 0 ? $"{(int)t.Delay}s" : "";
 
-            // 状态：停站状态 + 发车倒计时
+            // 状态：停站状态 + 停车时长 + 发车倒计时
             var statusParts = new List<string>();
             if (t.Waiting) statusParts.Add("等待入图");
             if (t.BrokenDown) statusParts.Add("故障");
             if (t.Finished) statusParts.Add("完成");
 
             bool isStationStop = t.OnBoard && t.Speed == 0 && !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+            bool isRunning = t.OnBoard && t.Speed > 0 && !t.BrokenDown && !t.Finished;
+
             if (isStationStop)
             {
                 statusParts.Add("停站");
+                // 停车时长（基于 NotMovingSince 时间戳）
+                if (t.NotMovingSince.HasValue)
+                {
+                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - t.NotMovingSince.Value;
+                    if (stoppedSec > 0)
+                    {
+                        var sts = TimeSpan.FromSeconds(stoppedSec);
+                        statusParts.Add(sts.TotalMinutes >= 1
+                            ? $"已停{(int)sts.TotalMinutes}分{sts.Seconds}秒"
+                            : $"已停{sts.Seconds}秒");
+                    }
+                }
                 // 显示发车倒计时（NextPrepareSec 为剩余秒数）
                 if (t.NextPrepareSec.HasValue && t.NextPrepareSec.Value > 0)
                 {
@@ -417,6 +517,10 @@ namespace RailRouteAssistantDesktop
                         statusParts.Add($"{ts.Seconds}秒发车");
                 }
             }
+            else if (isRunning)
+            {
+                statusParts.Add("运行中");
+            }
             else if (t.CanDepart)
             {
                 statusParts.Add("可发车");
@@ -424,6 +528,18 @@ namespace RailRouteAssistantDesktop
             else if (t.OnBoard && t.Speed == 0 && !t.Finished)
             {
                 statusParts.Add("停车");
+                // 非到站停车也显示停车时长
+                if (t.NotMovingSince.HasValue)
+                {
+                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - t.NotMovingSince.Value;
+                    if (stoppedSec > 0)
+                    {
+                        var sts = TimeSpan.FromSeconds(stoppedSec);
+                        statusParts.Add(sts.TotalMinutes >= 1
+                            ? $"已停{(int)sts.TotalMinutes}分"
+                            : $"已停{sts.Seconds}秒");
+                    }
+                }
             }
 
             var status = string.Join(" ", statusParts);
@@ -493,5 +609,6 @@ namespace RailRouteAssistantDesktop
         public int Platform; public string NextStation; public string StopReasons;
         public double? NextPrepareSec;  // 下一站发车准备时间（秒）
         public double? NextArrivalSec;  // 下一站到达时间（秒）
+        public double? NotMovingSince;  // 停车起始 unix 时间戳（秒）
     }
 }

@@ -90,6 +90,7 @@ namespace RailRouteAssistant
         private string BuildDataJson()
         {
             var (snapshots, alerts, lastUpdate, gameReady) = DataStore.GetCurrent();
+            var gameTimeSec = DataStore.GetGameTimeSeconds();
 
             var sb = new StringBuilder();
             sb.Append("{");
@@ -98,6 +99,7 @@ namespace RailRouteAssistant
             sb.Append("\"gameReady\":").Append(gameReady.ToString().ToLower()).Append(",");
             sb.Append("\"lastUpdate\":\"").Append(lastUpdate.ToString("HH:mm:ss")).Append("\",");
             sb.Append("\"serverTime\":\"").Append(DateTime.Now.ToString("HH:mm:ss")).Append("\",");
+            sb.Append("\"gameTime\":").Append(gameTimeSec.HasValue ? $"\"{FormatGameTime(gameTimeSec.Value)}\"" : "null").Append(",");
 
             // 列车列表
             sb.Append("\"trains\":[");
@@ -129,7 +131,8 @@ namespace RailRouteAssistant
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
                 sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
-                sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null");
+                sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"notMovingSince\":").Append(s.NotMovingSinceTimestamp.HasValue ? s.NotMovingSinceTimestamp.Value.ToString("F0") : "null");
                 sb.Append("}");
             }
             sb.Append("],");
@@ -180,6 +183,20 @@ namespace RailRouteAssistant
                            .Replace("\r", "\\r")
                            .Replace("\t", "\\t");
             return $"\"{escaped}\"";
+        }
+
+        /// <summary>
+        /// 游戏内时间（TimeSpan.TotalSeconds）格式化为 24h HH:MM:SS
+        /// </summary>
+        private static string FormatGameTime(double totalSeconds)
+        {
+            try
+            {
+                var ts = TimeSpan.FromSeconds(totalSeconds);
+                // 游戏内时间是自模拟开始的累计时长，取一天内的时分秒展示
+                return ts.ToString(@"hh\:mm\:ss");
+            }
+            catch { return ""; }
         }
     }
 }
