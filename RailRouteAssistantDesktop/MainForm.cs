@@ -63,11 +63,12 @@ namespace RailRouteAssistantDesktop
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };
             _timer.Tick += async (s, e) => await RefreshData();
             _timer.Start();
+            FormClosed += (s, e) => _trainInfo.Dispose();
             // 后台加载车次信息（不阻塞 UI）
             _ = Task.Run(async () =>
             {
                 await _trainInfo.LoadAsync();
-                Console.WriteLine($"[TrainInfo] 加载完成: {_trainInfo.Count} 趟车次");
+                Console.WriteLine($"[TrainInfo] 加载完成: 在线 {_trainInfo.OnlineCount}，离线 {_trainInfo.OfflineCount}");
             });
         }
 
@@ -401,6 +402,9 @@ namespace RailRouteAssistantDesktop
                             FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
                         });
 
+                // 每趟出现的列车都在后台按车号精确查询；不阻塞本次 UI/语音刷新。
+                PreloadTrainInfo();
+
                 // 语音播报：状态变化检测（用原始车号追踪，拆分前调用）
                 DetectAndAnnounce();
 
@@ -475,7 +479,9 @@ namespace RailRouteAssistantDesktop
             else
             {
                 var timeStr = !string.IsNullOrEmpty(_gameTime) ? $"游戏时间 {_gameTime}  |  " : "";
-                var dbStr = _trainInfo.IsLoaded ? $"  |  车次库 {_trainInfo.Count}" : "  |  车次库加载中";
+                var dbStr = _trainInfo.IsLoaded
+                    ? $"  |  车次 在线 {_trainInfo.OnlineCount} / 离线 {_trainInfo.OfflineCount}"
+                    : "  |  车次库加载中";
                 _statusLabel.Text = $"  {timeStr}已连接  |  在线 {onBoard}  等待 {waiting}  总计 {_trains.Count}{dbStr}";
                 _statusLabel.ForeColor = Color.LightGreen;
             }
@@ -568,6 +574,30 @@ namespace RailRouteAssistantDesktop
             part1 = m.Groups[1].Value;
             part2 = m.Groups[2].Value;
             return true;
+        }
+
+        /// <summary>
+        /// 预热当前地图上所有车号。合并车号会分别查询两段，保证列表和播报都能尽早拿到
+        /// 始发终到；服务内部会去重、限流并在失败时立即让离线表接管。
+        /// </summary>
+        private void PreloadTrainInfo()
+        {
+            if (!_trainInfo.IsLoaded) return;
+
+            foreach (var train in _trains)
+            {
+                if (string.IsNullOrWhiteSpace(train.Name) || train.Name == "?") continue;
+
+                if (TrySplitMergedTrainNumber(train.Name, out var part1, out var part2))
+                {
+                    _ = _trainInfo.EnsureResolvedAsync(part1);
+                    _ = _trainInfo.EnsureResolvedAsync(part2);
+                }
+                else
+                {
+                    _ = _trainInfo.EnsureResolvedAsync(train.Name);
+                }
+            }
         }
 
         /// <summary>

@@ -29,6 +29,47 @@ Rail Route 游戏 (Unity 进程)
 - 停车信息：停车原因、停车时长
 - 下一站信息：站名 + 站台号
 
+### 车次始发、终到查询
+
+旧版使用的 `train_list.js` 是一次性的静态全量表，已经不能覆盖当前运行图；桌面端不再在启动时下载该表。现在只对当前地图中实际出现的车号发起查询，数据优先级如下：
+
+| 优先级 | 数据源 | 行为 |
+|---|---|---|
+| 1 | 12306 按车号查询 | 请求 `https://search.12306.cn/search/v1/train/search?keyword={车次}&date={yyyyMMdd}`，在响应 `data[]` 中不区分大小写地精确匹配 `station_train_code`，直接读取 `from_station` / `to_station`。 |
+| 2 | 本机在线缓存 | 同一运行图日期内的成功查询保存在 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_online_cache.json`，下次启动可立即使用。 |
+| 3 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json`；发布包如附带 `data\train_routes_offline.json`，也会先被读取。 |
+
+12306 的查询结果可能同时含有 `Z51`、`Z510` 等前缀相同的车次，因此绝不能取数组第一项。网络请求最长 5 秒、最多同时 3 个；同一失败车次会退避 10 分钟，不会因桌面端每秒刷新而反复请求。成功结果按“车次 + 当前运行图日期”缓存，且覆盖同车号的离线结果。
+
+路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。项目提供了本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。
+
+在用户自己的电脑上运行以下命令即可刷新降级表：
+
+```powershell
+dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.csproj -- `
+  --apk "C:\Users\yw980\Downloads\lulutong.apk"
+```
+
+默认会生成：
+
+```text
+%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json
+%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline_report.json
+```
+
+导出器会校验三个索引的条数、二进制边界和路线表是否完全读完，并为斜杠复车号建立别名。找不到路线的车次、或同一车号对应不同始发终到的冲突项会写入报告并跳过，绝不以任意一条覆盖另一条。原始 APK 和导出的原始时刻数据不应提交到本仓库或未经许可分发。
+
+```json
+{
+  "schemaVersion": 1,
+  "source": "lulutong-local-export",
+  "generatedAtUtc": "2026-07-30T00:00:00Z",
+  "routes": {
+    "Z51": { "origin": "北京丰台", "destination": "启东" }
+  }
+}
+```
+
 ### 信号状态
 
 列车越过一座信号机时，插件在游戏线程调用该信号的
@@ -385,10 +426,12 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── Program.cs                 # 入口
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
-├── TrainInfoService.cs        # 车次库（12306 数据），查询车次始发终到
+├── TrainInfoService.cs        # 12306 在线优先 + 本机离线降级的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
 ├── assets/audio/              # 预录音频素材（69 个文件）
 └── RailRouteAssistantDesktop.csproj
+
+tools/ExportLulutongTrainRoutes/ # 从用户本机 APK 导出离线车次降级表
 ```
 
 ## 免责声明
