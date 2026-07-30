@@ -8,6 +8,7 @@ namespace RailRouteAssistant
     /// </summary>
     public class TrainSnapshot
     {
+        public string TrainId;
         public string TrainName;
         public int CurrentSpeed;
         public int MaxSpeed;
@@ -23,22 +24,40 @@ namespace RailRouteAssistant
         public double? NotMovingDuration;       // 停车时长（秒），由采集线程用游戏时间差值算出
         public int LookaheadCount;
         public bool HasValidRoute;
-        public bool NeedsRouteAhead;       // 是否需要前方进路
-        public bool HasActingSignal;       // 前方是否有信号灯
-        public string SignalState;         // 信号灯状态描述
-        public int SignalAllocationState = -1;  // 信号机自身的 AllocationState: -1=未知 0=Free 1=Allocated 2=Occupied 3=Shunting
+        public bool NeedsRouteAhead;       // 游戏原始的远端进路需求，仅作诊断
+        public bool HasActingSignal;       // 是否已找到紧邻的下一座同向运营信号
+        public string SignalState;         // 紧邻下一座信号的状态描述
+        public int SignalAllocationState = -1;  // 下一座信号: -1=未知 0=Free 1=Allocated 2=Occupied 3=Shunting
         public int SignalType = -1;        // 信号机类型: 0=Manual 1=Auto 2=Shunting
-        public bool SignalIsPendingRoute;  // 信号机是否有正在等待的进路
-        public int FrontAllocationState = -1;   // 信号机 Front 轨道段分配状态: -1=未知 0=Free 1=Allocated 2=Occupied
+        public bool SignalIsPendingRoute;  // 下一座信号是否有正在等待的进路
+        public int FrontAllocationState = -1;   // 兼容旧 API；Semaphore.Front 是接近侧连接，不用于告警
         public int RouteTotalSteps;        // 进路总区间数
         public int RouteCurrentStep;       // 当前区间索引
         public int RouteRemainingSteps;    // 剩余区间数
         public int NextPlatformNumber;     // 下一站站台号
         public string NextStationName;
+        public bool NextStationNonStop;     // 下一次访问是否为通过站
         public double? NextPrepareTimeTotalSeconds;  // 距发车的剩余秒数（= NextPrepareGameTime - 当前游戏时间）
         public double? NextArrivalTimeTotalSeconds;  // 距到达的剩余秒数（= NextArrivalGameTime - 当前游戏时间）
         internal double? NextPrepareGameTime;        // 原始游戏内绝对时间（TimeSpan.TotalSeconds），采集后换算成剩余
         internal double? NextArrivalGameTime;        // 原始游戏内绝对时间（TimeSpan.TotalSeconds），采集后换算成剩余
+
+        // 最近一次实际访问。游戏在到站/通过后会把本站从 NextStationVisits 移除，
+        // 因而这里才是播报本站与识别通过站的可靠来源。
+        public int ActualVisitCount;
+        public string LastVisitStationName;
+        public int LastVisitPlatformNumber;
+        public bool LastVisitNonStop;
+        public int LastVisitStopDurationMinutes;
+        public bool LastVisitDeparted;
+        internal double? LastVisitDepartureGameTime;
+
+        // 当前计划停站。仅在列车真正停站时使用；To 为游戏内绝对发车时刻。
+        public string CurrentStationName;
+        public int CurrentPlatformNumber;
+        public int CurrentStopDurationMinutes;
+        public double? DepartureRemainingSeconds;
+        internal double? CurrentDepartureGameTime;
         public string StopReasons;
         public List<string> RouteStepTrackIds = new List<string>(); // 前方进路步骤的轨道标识
     }

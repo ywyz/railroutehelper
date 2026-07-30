@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Security;
 using System.Speech.Synthesis;
 using System.Threading;
 using NAudio.Wave;
@@ -15,6 +16,7 @@ namespace RailRouteAssistantDesktop
     /// </summary>
     public class VoiceEngine : IDisposable
     {
+        private const string TtsProsodyRate = "+20%";
         private readonly string _audioDir;
         private readonly BlockingCollection<List<Segment>> _queue = new();
         private readonly Thread _playerThread;
@@ -44,6 +46,7 @@ namespace RailRouteAssistantDesktop
                 _tts.SelectVoice("Microsoft Huihui");  // 中文女声（Win10/11 自带）
             }
             catch { /* 回退默认语音 */ }
+            // 具体播报段通过 SSML 设为 +20%，这里保留默认基准速度。
             _tts.Rate = 0;
             _tts.Volume = 100;
 
@@ -52,82 +55,143 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>播报类型</summary>
-        public enum AnnouncementType { Arriving, StoppedAtStation, Departed }
+        public enum AnnouncementType { Arriving, StoppedAtStation, Departed, Passing }
 
-        /// <summary>
-        /// 入队一条播报。
-        /// trainCode: 车号如 "G4545"（已拆分后的单段车号）
-        /// destination: 终到站名（用于"开往xxxx方向"），可为空
-        /// currentStation: 当前站名（停站播报用），可为空
-        /// platform: 站台号（停站播报用），0 表示无
-        /// delayMinutes: 晚点分钟（发车播报用），<=0 视为正点
-        /// </summary>
-        public void Enqueue(AnnouncementType type, string trainCode, string destination,
-                            string currentStation, int platform, int delayMinutes)
+        /// <summary>一条播报所需的具名字段，避免将当前站与下一站的位置参数混用。</summary>
+        public sealed class Announcement
         {
-            var segs = BuildSegments(type, trainCode, destination, currentStation, platform, delayMinutes);
+            public AnnouncementType Type;
+            public string TrainCode;
+            public string Destination;
+            public string Station;
+            public int Platform;
+            public string NextStation;
+            public int NextPlatform;
+            public int StopMinutes;
+            /// <summary>正数表示晚点分钟；零或负数按正点播报。</summary>
+            public int DelayMinutes;
+        }
+
+        /// <summary>入队一条播报。</summary>
+        public void Enqueue(Announcement announcement)
+        {
+            if (announcement == null) return;
+            var segs = BuildSegments(announcement);
             if (segs.Count > 0) _queue.Add(segs);
         }
 
-        private List<Segment> BuildSegments(AnnouncementType type, string trainCode,
-            string destination, string currentStation, int platform, int delayMinutes)
+        private List<Segment> BuildSegments(Announcement announcement)
         {
             var segs = new List<Segment>();
-            string dest = destination ?? "";
-            string cur = currentStation ?? "";
+            string dest = announcement.Destination ?? "";
 
             // 开场提示音
             AddAudio(segs, "广播开始音1.mp3");
 
-            switch (type)
+            switch (announcement.Type)
             {
                 case AnnouncementType.Arriving:
-                    // 列车进入地图（接近）：开往xxxx方向的列车 车号 接近，请做好接车准备
-                    if (!string.IsNullOrEmpty(dest))
-                    {
-                        AddTts(segs, "开往");
-                        AddTts(segs, dest);
-                        AddTts(segs, "方向的列车");
-                    }
-                    AddTrainNumber(segs, trainCode);
-                    AddTts(segs, "接近，请做好接车准备");
+                    // 开往 xx 方向的列车 车号 已经接近，下一站 xx x道，请做好接车准备。
+                    AddDirectionPrefix(segs, dest);
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTts(segs, "已经接近，");
+                    if (AddNextStation(segs, announcement.NextStation, announcement.NextPlatform))
+                        AddTts(segs, "，请做好接车准备。");
+                    else
+                        AddTts(segs, "请做好接车准备。");
                     break;
 
                 case AnnouncementType.StoppedAtStation:
-                    // 列车停站：列车停靠在 站名 x站台，开往xxx方向
-                    AddAudio(segs, "列车停靠在.wav");
-                    if (!string.IsNullOrEmpty(cur)) AddTts(segs, cur);
-                    if (platform > 0) { AddDigit(segs, platform); AddAudio(segs, "站台.wav"); }
-                    if (!string.IsNullOrEmpty(dest))
+                    // 开往 xx 方向的列车 车号 已经停靠 xx x站台，本次停车 x 分。
+                    AddDirectionPrefix(segs, dest);
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTts(segs, "已经停靠");
+                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "站台");
+                    if (announcement.StopMinutes > 0)
                     {
-                        AddTts(segs, "开往");
-                        AddTts(segs, dest);
-                        AddTts(segs, "方向");
+                        AddTts(segs, "，本次停车");
+                        AddNumber(segs, announcement.StopMinutes);
+                        AddTts(segs, "分。");
+                    }
+                    else
+                    {
+                        AddTts(segs, "，本次停车时间待定。");
                     }
                     break;
 
                 case AnnouncementType.Departed:
-                    // 列车发车：开往xxxx方向的列车 车号 正点/晚点x分发车
-                    if (!string.IsNullOrEmpty(dest))
-                    {
-                        AddTts(segs, "开往");
-                        AddTts(segs, dest);
-                        AddTts(segs, "方向的列车");
-                    }
-                    AddTrainNumber(segs, trainCode);
-                    if (delayMinutes <= 0)
-                        AddTts(segs, "正点发车");
-                    else
+                    // 开往 xx 方向的列车 车号 正点发车，下一站 xx x道。
+                    // 开往 xx 方向的列车 车号 晚点 x 分发车，下一站 xx x道。
+                    AddDirectionPrefix(segs, dest);
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    if (announcement.DelayMinutes > 0)
                     {
                         AddTts(segs, "晚点");
-                        AddNumber(segs, delayMinutes);
+                        AddNumber(segs, announcement.DelayMinutes);
                         AddTts(segs, "分发车");
                     }
+                    else
+                    {
+                        AddTts(segs, "正点发车");
+                    }
+                    if (!string.IsNullOrEmpty(announcement.NextStation))
+                    {
+                        AddTts(segs, "，");
+                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform);
+                    }
+                    AddTts(segs, "。");
+                    break;
+
+                case AnnouncementType.Passing:
+                    // 开往 xx 方向的列车 车号 通过 xx x道，下一站 xx x道。
+                    AddDirectionPrefix(segs, dest);
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTts(segs, "通过");
+                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "道");
+                    if (!string.IsNullOrEmpty(announcement.NextStation))
+                    {
+                        AddTts(segs, "，");
+                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform);
+                    }
+                    AddTts(segs, "。");
                     break;
             }
 
             AddAudio(segs, "广播结束音1.mp3");
             return segs;
+        }
+
+        private void AddDirectionPrefix(List<Segment> segs, string destination)
+        {
+            if (!string.IsNullOrEmpty(destination))
+            {
+                AddTts(segs, "开往");
+                AddTts(segs, destination);
+                AddTts(segs, "方向的列车");
+            }
+            else
+            {
+                AddTts(segs, "列车");
+            }
+        }
+
+        /// <summary>添加“下一站 xx x道”；没有可用下一站时返回 false。</summary>
+        private bool AddNextStation(List<Segment> segs, string station, int platform)
+        {
+            if (string.IsNullOrEmpty(station)) return false;
+            AddTts(segs, "下一站");
+            AddStationAndPlatform(segs, station, platform, "道");
+            return true;
+        }
+
+        private void AddStationAndPlatform(List<Segment> segs, string station, int platform, string platformSuffix)
+        {
+            if (!string.IsNullOrEmpty(station)) AddTts(segs, station);
+            if (platform > 0)
+            {
+                AddDigit(segs, platform);
+                AddTts(segs, platformSuffix);
+            }
         }
 
         /// <summary>添加车号读音：字母读音 + 数字逐位</summary>
@@ -210,9 +274,23 @@ namespace RailRouteAssistantDesktop
         {
             try
             {
-                _tts.Speak(text);  // 同步播放
+                // 使用 SSML 精确提高合成语音的语速；先转义站名等外部文本，避免破坏 XML。
+                string escaped = SecurityElement.Escape(text) ?? string.Empty;
+                _tts.SpeakSsml(
+                    "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
+                    "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>");
             }
-            catch { /* TTS 不可用时静默 */ }
+            catch
+            {
+                // 少数系统语音可能不支持 SSML；仍以较快的普通语速作为兼容回退。
+                try
+                {
+                    _tts.Rate = 2;
+                    _tts.Speak(text);
+                    _tts.Rate = 0;
+                }
+                catch { /* TTS 不可用时静默 */ }
+            }
         }
 
         public void Dispose()

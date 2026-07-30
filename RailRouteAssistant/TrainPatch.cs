@@ -19,6 +19,7 @@ namespace RailRouteAssistant
         internal static Type TrainType;
         internal static Type SemaphoreType;
         internal static Type ConnectionType;
+        internal static Type NodeType;
         internal static Type TimeType;
 
         // Ctx.Deps
@@ -33,13 +34,14 @@ namespace RailRouteAssistant
         internal static PropertyInfo TimeControllerCurrentTime;
 
         // Train 属性 getter
-        internal static PropertyInfo TrainCurrentSpeed, TrainMaxSpeed, TrainTargetSpeed, TrainDelay;
+        internal static PropertyInfo TrainCurrentSpeed, TrainMaxSpeed, TrainTargetSpeed, TrainDelay, TrainUuid, TrainHead, TrainOperationMode;
         internal static PropertyInfo TrainCanDepart, TrainFinished, TrainBrokenDown, TrainOnBoard, TrainDisposed;
         internal static PropertyInfo TrainNotMovingSince, TrainSegmentsInLookahead, TrainActingSignal;
-        internal static PropertyInfo TrainContractLeg, TrainNextStationVisits;
+        internal static PropertyInfo TrainContractLeg, TrainNextStationVisits, TrainActualVisits, TrainLastVisited;
 
         // Train 字段
         internal static FieldInfo TrainReportingNumber, TrainIsWaitingToBeSpawned, TrainActiveRouteRun, TrainStopReasons;
+        internal static FieldInfo TrainUuidField, TrainScheduledVisits, TrainCurrentStopIndex;
 
         // Train 方法
         internal static MethodInfo TrainNeedsRouteAhead, TrainNextStationVisit;
@@ -47,7 +49,9 @@ namespace RailRouteAssistant
         // ContractLeg 属性（延迟初始化）
 
         // Semaphore 属性
-        internal static PropertyInfo SemAllocationState, SemType, SemIsPendingRoute, SemFront;
+        internal static PropertyInfo SemAllocationState, SemIsPendingRoute, SemIsOperational, SemFront;
+        internal static FieldInfo SemType;
+        internal static MethodInfo SemPathToNextSemaphore, SemIsActingFrom;
 
         // Connection 属性
         internal static PropertyInfo ConnAllocationState, ConnName;
@@ -56,7 +60,8 @@ namespace RailRouteAssistant
         internal static PropertyInfo StationFriendlyName, StationName;
 
         // StationVisit 属性
-        internal static PropertyInfo VisitStation, VisitPlatformNumber;
+        internal static PropertyInfo VisitStation, VisitPlatformNumber, VisitNonStop, VisitStopDurationMinutes, VisitRelativeTimes;
+        internal static FieldInfo VisitFrom, VisitTo, VisitDeparted;
 
         // RouteRun 字段
         internal static FieldInfo RRSteps, RRCurrentStepIndex;
@@ -83,6 +88,7 @@ namespace RailRouteAssistant
                 TrainType = AccessTools.TypeByName("Game.Train.Train");
                 SemaphoreType = AccessTools.TypeByName("Game.Railroad.Semaphore");
                 ConnectionType = AccessTools.TypeByName("Game.Railroad.Connection");
+                NodeType = AccessTools.TypeByName("Game.Railroad.Node");
                 TimeType = AccessTools.TypeByName("UnityEngine.Time");
 
                 if (CtxType != null)
@@ -105,11 +111,19 @@ namespace RailRouteAssistant
                     TrainActingSignal = TrainType.GetProperty("ActingSignalAhead", bf);
                     TrainContractLeg = TrainType.GetProperty("ContractLeg", bf);
                     TrainNextStationVisits = TrainType.GetProperty("NextStationVisits", bf);
+                    TrainActualVisits = TrainType.GetProperty("ActualVisits", bf);
+                    TrainLastVisited = TrainType.GetProperty("LastVisited", bf);
+                    TrainUuid = TrainType.GetProperty("Uuid", bf);
+                    TrainHead = TrainType.GetProperty("Head", bf);
+                    TrainOperationMode = TrainType.GetProperty("OperationMode", bf);
 
                     TrainReportingNumber = AccessTools.Field(TrainType, "ReportingNumber");
                     TrainIsWaitingToBeSpawned = AccessTools.Field(TrainType, "IsWaitingToBeSpawned");
                     TrainActiveRouteRun = AccessTools.Field(TrainType, "ActiveRouteRun");
                     TrainStopReasons = AccessTools.Field(TrainType, "StopReasons");
+                    TrainUuidField = AccessTools.Field(TrainType, "Uuid");
+                    TrainScheduledVisits = AccessTools.Field(TrainType, "ScheduledVisits");
+                    TrainCurrentStopIndex = AccessTools.Field(TrainType, "CurrentStopIndex");
 
                     TrainNeedsRouteAhead = AccessTools.Method(TrainType, "NeedsRouteAhead");
                     TrainNextStationVisit = AccessTools.Method(TrainType, "NextStationVisit");
@@ -123,13 +137,18 @@ namespace RailRouteAssistant
                     // 若 Semaphore 上的 AllocationState 没有 getter（set-only 遮蔽），从基类 Node 取
                     if (SemAllocationState == null || SemAllocationState.GetMethod == null)
                     {
-                        var nodeType = AccessTools.TypeByName("Game.Railroad.Node");
+                        var nodeType = NodeType;
                         if (nodeType != null)
                             SemAllocationState = nodeType.GetProperty("AllocationState", bf);
                     }
-                    SemType = SemaphoreType.GetProperty("Type", bf);
+                    SemType = AccessTools.Field(SemaphoreType, "Type");
                     SemIsPendingRoute = SemaphoreType.GetProperty("IsPendingRoute", bf);
+                    SemIsOperational = SemaphoreType.GetProperty("IsOperational", bf);
+                    if (SemIsOperational == null || SemIsOperational.GetMethod == null)
+                        SemIsOperational = NodeType?.GetProperty("IsOperational", bf);
                     SemFront = SemaphoreType.GetProperty("Front", bf);
+                    SemPathToNextSemaphore = AccessTools.Method(SemaphoreType, "PathToNextSemaphore", new[] { typeof(bool) });
+                    SemIsActingFrom = AccessTools.Method(SemaphoreType, "IsActingFrom");
                 }
 
                 // Connection（同样可能继承自 Node，确保拿到有 getter 的属性）
@@ -139,7 +158,7 @@ namespace RailRouteAssistant
                     ConnAllocationState = ConnectionType.GetProperty("AllocationState", bf);
                     if (ConnAllocationState == null || ConnAllocationState.GetMethod == null)
                     {
-                        var nodeType = AccessTools.TypeByName("Game.Railroad.Node");
+                        var nodeType = NodeType;
                         if (nodeType != null)
                             ConnAllocationState = nodeType.GetProperty("AllocationState", bf);
                     }
@@ -196,10 +215,16 @@ namespace RailRouteAssistant
         internal static void EnsureStationTypes(Type visitType, Type stationType)
         {
             var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            if (VisitStation == null && visitType != null)
+            if (visitType != null)
             {
-                VisitStation = visitType.GetProperty("Station", bf);
-                VisitPlatformNumber = visitType.GetProperty("PlatformNumber", bf);
+                if (VisitStation == null) VisitStation = visitType.GetProperty("Station", bf);
+                if (VisitPlatformNumber == null) VisitPlatformNumber = visitType.GetProperty("PlatformNumber", bf);
+                if (VisitNonStop == null) VisitNonStop = visitType.GetProperty("NonStop", bf);
+                if (VisitStopDurationMinutes == null) VisitStopDurationMinutes = visitType.GetProperty("StopDurationMinutes", bf);
+                if (VisitRelativeTimes == null) VisitRelativeTimes = visitType.GetProperty("RelativeTimes", bf);
+                if (VisitFrom == null) VisitFrom = AccessTools.Field(visitType, "From");
+                if (VisitTo == null) VisitTo = AccessTools.Field(visitType, "To");
+                if (VisitDeparted == null) VisitDeparted = AccessTools.Field(visitType, "Departed");
             }
             if (StationFriendlyName == null && stationType != null)
             {
@@ -262,6 +287,10 @@ namespace RailRouteAssistant
         private static bool _firstCallLogged = false;
         private static float _lastDiagLog = 0f;
         private static int _callCount = 0;
+        // UUID -> 列车刚越过一个信号后，沿实际行车方向得到的下一座运营信号。
+        // 保存对象本身而非一次性状态，使进路后来开通时可在下一次快照中立即消警。
+        private static readonly Dictionary<string, object> _immediateSignalWatches = new Dictionary<string, object>();
+        private static readonly object _immediateSignalWatchesLock = new object();
 
         public static void Move_Postfix(object __instance)
         {
@@ -351,9 +380,11 @@ namespace RailRouteAssistant
                     var snap = SnapshotTrain(train);
                     if (snap != null) snapshots.Add(snap);
                 }
+                CleanupImmediateSignalWatches(snapshots);
 
-                // 用游戏内时间换算"剩余秒数"和"停车时长"
-                // （NextPrepare/NextArrival 是游戏内绝对时间点，NotMovingSince 也是游戏内绝对时间）
+                // 用游戏内时间换算"剩余秒数"和"停车时长"。
+                // 注意：ContractLeg.NextPrepareTime 是下一交路的准备时刻；本站发车倒计时
+                // 必须使用当前 StationVisit 的 To。
                 if (gameTimeSec.HasValue)
                 {
                     double now = gameTimeSec.Value;
@@ -370,6 +401,13 @@ namespace RailRouteAssistant
                         {
                             var rem = s.NextArrivalGameTime.Value - now;
                             s.NextArrivalTimeTotalSeconds = rem > 0 ? rem : 0;
+                        }
+                        // 当前停站距发车时间。RelativeTimes 的 visit 没有可比较的绝对时刻，
+                        // 此时保持 null，由桌面端显示为未知而不是给出错误倒计时。
+                        if (s.CurrentDepartureGameTime.HasValue)
+                        {
+                            var rem = s.CurrentDepartureGameTime.Value - now;
+                            s.DepartureRemainingSeconds = rem > 0 ? rem : 0;
                         }
                         // 停车时长 = 当前游戏时间 - 停车起始时间
                         if (s.NotMovingSinceGameTime.HasValue)
@@ -443,6 +481,7 @@ namespace RailRouteAssistant
             {
                 var snap = new TrainSnapshot
                 {
+                    TrainId = GetTrainId(train),
                     TrainName = ReflectCache.GetField(train, ReflectCache.TrainReportingNumber, "?") ?? "?",
                     CurrentSpeed = ReflectCache.GetProp(train, ReflectCache.TrainCurrentSpeed, 0),
                     MaxSpeed = ReflectCache.GetProp(train, ReflectCache.TrainMaxSpeed, 0),
@@ -503,6 +542,11 @@ namespace RailRouteAssistant
                 // 下一站
                 CollectNextStation(train, snap);
 
+                // 最近实际访问与当前计划停站。两者都不能用 NextStationVisit 代替：
+                // 到站时游戏会先从 NextStationVisits 移除本站。
+                CollectLastVisit(train, snap);
+                CollectCurrentStop(train, snap);
+
                 // StopReasons
                 snap.StopReasons = GetStopReasons(train);
 
@@ -530,15 +574,161 @@ namespace RailRouteAssistant
             catch { return 0; }
         }
 
+        /// <summary>
+        /// 列车越过信号机后的精确事件。仅记录实际行车方向的下一座运营信号，
+        /// 不使用会跳过已开放信号的 ActingSignalAhead。
+        /// </summary>
+        public static void SemaphoreAfterTrainEntered_Postfix(object __instance, object train)
+        {
+            try
+            {
+                if (__instance == null || train == null || !ReflectCache.Init()) return;
+                if (ReflectCache.SemaphoreType == null || !ReflectCache.SemaphoreType.IsInstanceOfType(__instance)) return;
+
+                // 调车不产生正线接车预警；与游戏原方法的常规运行逻辑保持一致。
+                var mode = ReflectCache.TrainOperationMode?.GetValue(train);
+                if (mode != null && Convert.ToInt32(mode) == 1) return;
+
+                var head = ReflectCache.TrainHead?.GetValue(train);
+                if (head == null || ReflectCache.SemIsActingFrom == null) return;
+
+                // 从 ActingFrom 一侧进入是反向通过，不应将该信号后的路径当作列车前方。
+                if (Convert.ToBoolean(ReflectCache.SemIsActingFrom.Invoke(__instance, new[] { head }))) return;
+
+                var trainId = GetTrainId(train);
+                if (string.IsNullOrEmpty(trainId)) return;
+
+                object nextSignal = GetNextOperationalSignalAfter(__instance);
+                lock (_immediateSignalWatchesLock)
+                {
+                    // null 是有效状态：表示沿当前路径没有下一座可运营信号（例如出图边缘）。
+                    _immediateSignalWatches[trainId] = nextSignal;
+                }
+            }
+            catch
+            {
+                // 绝不能让一个预警采集失败干扰游戏原始的过信号逻辑。
+            }
+        }
+
+        private static string GetTrainId(object train)
+        {
+            try
+            {
+                var id = ReflectCache.TrainUuid?.GetValue(train) ?? ReflectCache.TrainUuidField?.GetValue(train);
+                return id?.ToString() ?? "";
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
+        /// 取得本列车应监视的紧邻下一座同向信号。正常情况下来自过信号事件；
+        /// 插件中途加载时才从游戏已计算的制动前视链中保守兜底，找不到就视为未知。
+        /// </summary>
+        private static object GetImmediateNextSignal(object train)
+        {
+            var trainId = GetTrainId(train);
+            if (!string.IsNullOrEmpty(trainId))
+            {
+                lock (_immediateSignalWatchesLock)
+                {
+                    if (_immediateSignalWatches.TryGetValue(trainId, out var watched))
+                        return watched;
+                }
+            }
+
+            return FindImmediateSignalInLookahead(train);
+        }
+
+        private static object GetNextOperationalSignalAfter(object passedSignal)
+        {
+            try
+            {
+                var path = ReflectCache.SemPathToNextSemaphore?.Invoke(passedSignal, new object[] { true })
+                    as System.Collections.IEnumerable;
+                if (path == null) return null;
+
+                object next = null;
+                foreach (var node in path)
+                {
+                    if (node != null && !ReferenceEquals(node, passedSignal) &&
+                        ReflectCache.SemaphoreType != null && ReflectCache.SemaphoreType.IsInstanceOfType(node))
+                    {
+                        next = node;
+                    }
+                }
+                return next;
+            }
+            catch { return null; }
+        }
+
+        private static object FindImmediateSignalInLookahead(object train)
+        {
+            try
+            {
+                var lookahead = ReflectCache.TrainSegmentsInLookahead?.GetValue(train);
+                if (lookahead == null || ReflectCache.SemaphoreType == null || ReflectCache.ConnectionType == null ||
+                    ReflectCache.SemIsActingFrom == null) return null;
+
+                var nodesProp = lookahead.GetType().GetProperty("Nodes",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var nodes = nodesProp?.GetValue(lookahead) as System.Collections.IEnumerable;
+                if (nodes == null) return null;
+
+                object previousConnection = ReflectCache.TrainHead?.GetValue(train);
+                foreach (var node in nodes)
+                {
+                    if (node == null) continue;
+
+                    if (ReflectCache.SemaphoreType.IsInstanceOfType(node))
+                    {
+                        // 兜底路径不应把已停用的信号当作会拦车的下一信号。
+                        if (ReflectCache.SemIsOperational == null ||
+                            !Convert.ToBoolean(ReflectCache.SemIsOperational.GetValue(node)))
+                        {
+                            continue;
+                        }
+
+                        if (previousConnection != null && Convert.ToBoolean(
+                            ReflectCache.SemIsActingFrom.Invoke(node, new[] { previousConnection })))
+                        {
+                            return node;
+                        }
+                    }
+                    else if (ReflectCache.ConnectionType.IsInstanceOfType(node))
+                    {
+                        previousConnection = node;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static void CleanupImmediateSignalWatches(List<TrainSnapshot> snapshots)
+        {
+            var activeIds = new HashSet<string>(snapshots
+                .Where(s => s.IsOnBoard && !s.IsDisposed && !string.IsNullOrEmpty(s.TrainId))
+                .Select(s => s.TrainId));
+
+            lock (_immediateSignalWatchesLock)
+            {
+                var stale = _immediateSignalWatches.Keys.Where(id => !activeIds.Contains(id)).ToList();
+                foreach (var id in stale) _immediateSignalWatches.Remove(id);
+            }
+        }
+
         private static void CollectSignalInfo(object train, TrainSnapshot snap)
         {
             try
             {
-                var signal = ReflectCache.TrainActingSignal?.GetValue(train);
+                // ActingSignalAhead 会跳过已经开通的信号，可能指向多段进路之后的远方红灯。
+                // 告警与桌面“信号”列都必须监视紧邻的下一座同向物理信号。
+                var signal = GetImmediateNextSignal(train);
                 if (signal == null)
                 {
                     snap.HasActingSignal = false;
-                    snap.SignalState = "前方无信号";
+                    snap.SignalState = "下一信号未知";
                     return;
                 }
 
@@ -565,16 +755,8 @@ namespace RailRouteAssistant
                     snap.SignalIsPendingRoute = Convert.ToBoolean(ReflectCache.SemIsPendingRoute.GetValue(signal));
                 }
 
-                // Front Connection AllocationState
-                if (ReflectCache.SemFront != null && ReflectCache.SemFront.GetMethod != null)
-                {
-                    var frontConn = ReflectCache.SemFront.GetValue(signal);
-                    if (frontConn != null && ReflectCache.ConnAllocationState != null && ReflectCache.ConnAllocationState.GetMethod != null)
-                    {
-                        var allocVal = ReflectCache.ConnAllocationState.GetValue(frontConn);
-                        if (allocVal != null) snap.FrontAllocationState = Convert.ToInt32(allocVal);
-                    }
-                }
+                // Semaphore.Front 实际等于 ActingFrom（信号前的接近轨道），不是信号后的进路。
+                // 不再用它推断“前方关闭”，保留字段的 -1 值仅为兼容旧 HTTP 客户端。
             }
             catch (Exception ex)
             {
@@ -635,65 +817,166 @@ namespace RailRouteAssistant
         {
             try
             {
-                object visit = null;
-
-                // 优先 NextStationVisit 方法
-                if (ReflectCache.TrainNextStationVisit != null)
-                    visit = ReflectCache.TrainNextStationVisit.Invoke(train, null);
-
-                // 回退到 NextStationVisits
-                if (visit == null && ReflectCache.TrainNextStationVisits != null)
-                {
-                    var visits = ReflectCache.TrainNextStationVisits.GetValue(train);
-                    if (visits != null)
-                    {
-                        foreach (var v in (System.Collections.IEnumerable)visits) { visit = v; break; }
-                    }
-                }
-
+                var visit = GetNextStationVisit(train);
                 if (visit == null)
                 {
                     snap.NextStationName = "";
                     return;
                 }
 
-                var visitType = visit.GetType();
-                ReflectCache.EnsureStationTypes(visitType, null);
-
-                // Station
-                if (ReflectCache.VisitStation != null)
-                {
-                    var station = ReflectCache.VisitStation.GetValue(visit);
-                    if (station != null)
-                    {
-                        ReflectCache.EnsureStationTypes(null, station.GetType());
-
-                        if (ReflectCache.StationFriendlyName != null && ReflectCache.StationFriendlyName.GetMethod != null)
-                            snap.NextStationName = ReflectCache.StationFriendlyName.GetValue(station) as string ?? "";
-
-                        if (string.IsNullOrEmpty(snap.NextStationName) && ReflectCache.StationName != null && ReflectCache.StationName.GetMethod != null)
-                            snap.NextStationName = ReflectCache.StationName.GetValue(station) as string ?? "";
-
-                        if (string.IsNullOrEmpty(snap.NextStationName))
-                            snap.NextStationName = station.ToString() ?? "";
-                    }
-                }
-
-                // PlatformNumber
-                if (ReflectCache.VisitPlatformNumber != null)
-                {
-                    var val = ReflectCache.VisitPlatformNumber.GetValue(visit);
-                    if (val != null)
-                    {
-                        try { snap.NextPlatformNumber = Convert.ToInt32(val); }
-                        catch { }
-                    }
-                }
+                ReadStationVisit(visit, out var station, out var platform, out var nonStop,
+                    out _, out _, out _, out _);
+                snap.NextStationName = station;
+                snap.NextPlatformNumber = platform;
+                snap.NextStationNonStop = nonStop;
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"CollectNextStation 异常: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 采集最近一次实际访问。通过站也会写入 ActualVisits，因而可与 ActualVisitCount
+        /// 一起构成稳定的事件序号，供桌面端判断“到站”和“通过”。
+        /// </summary>
+        private static void CollectLastVisit(object train, TrainSnapshot snap)
+        {
+            try
+            {
+                var actualVisits = ReflectCache.TrainActualVisits?.GetValue(train);
+                snap.ActualVisitCount = CountSegments(actualVisits);
+
+                var visit = ReflectCache.TrainLastVisited?.GetValue(train);
+                if (visit == null) return;
+
+                ReadStationVisit(visit, out var station, out var platform, out var nonStop,
+                    out var stopMinutes, out var departureTime, out _, out var departed);
+                snap.LastVisitStationName = station;
+                snap.LastVisitPlatformNumber = platform;
+                snap.LastVisitNonStop = nonStop;
+                snap.LastVisitStopDurationMinutes = stopMinutes;
+                snap.LastVisitDepartureGameTime = departureTime;
+                snap.LastVisitDeparted = departed;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectLastVisit 异常: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 读取当前计划停站。游戏在记录一次访问时先将 CurrentStopIndex 加一，因此
+        /// ScheduledVisits[CurrentStopIndex - 1] 才是当前（或刚离开的）本站。
+        /// </summary>
+        private static void CollectCurrentStop(object train, TrainSnapshot snap)
+        {
+            try
+            {
+                var scheduledVisits = ReflectCache.TrainScheduledVisits?.GetValue(train) as System.Collections.IList;
+                int currentStopIndex = ReflectCache.GetField(train, ReflectCache.TrainCurrentStopIndex, 0);
+                int visitIndex = currentStopIndex - 1;
+
+                if (scheduledVisits != null && visitIndex >= 0 && visitIndex < scheduledVisits.Count)
+                {
+                    var visit = scheduledVisits[visitIndex];
+                    if (visit != null)
+                    {
+                        ReadStationVisit(visit, out var station, out var platform, out var nonStop,
+                            out var stopMinutes, out var departureTime, out _, out _);
+                        if (!nonStop)
+                        {
+                            snap.CurrentStationName = station;
+                            snap.CurrentPlatformNumber = platform;
+                            snap.CurrentStopDurationMinutes = stopMinutes;
+                            snap.CurrentDepartureGameTime = departureTime;
+                            return;
+                        }
+                    }
+                }
+
+                // 游戏版本字段变动时，至少退回到最近一次实际停站，绝不退回到“下一站”。
+                if (!snap.LastVisitNonStop && !string.IsNullOrEmpty(snap.LastVisitStationName))
+                {
+                    snap.CurrentStationName = snap.LastVisitStationName;
+                    snap.CurrentPlatformNumber = snap.LastVisitPlatformNumber;
+                    snap.CurrentStopDurationMinutes = snap.LastVisitStopDurationMinutes;
+                    snap.CurrentDepartureGameTime = snap.LastVisitDepartureGameTime;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectCurrentStop 异常: {ex.Message}");
+            }
+        }
+
+        private static object GetNextStationVisit(object train)
+        {
+            try
+            {
+                if (ReflectCache.TrainNextStationVisit != null)
+                {
+                    var visit = ReflectCache.TrainNextStationVisit.Invoke(train, null);
+                    if (visit != null) return visit;
+                }
+
+                var visits = ReflectCache.TrainNextStationVisits?.GetValue(train) as System.Collections.IEnumerable;
+                if (visits != null)
+                {
+                    foreach (var visit in visits) return visit;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static void ReadStationVisit(object visit, out string stationName, out int platformNumber,
+            out bool nonStop, out int stopDurationMinutes, out double? departureGameTime,
+            out bool relativeTimes, out bool departed)
+        {
+            stationName = "";
+            platformNumber = 0;
+            nonStop = false;
+            stopDurationMinutes = 0;
+            departureGameTime = null;
+            relativeTimes = false;
+            departed = false;
+            if (visit == null) return;
+
+            try
+            {
+                ReflectCache.EnsureStationTypes(visit.GetType(), null);
+                nonStop = ReflectCache.GetProp(visit, ReflectCache.VisitNonStop, false);
+                stopDurationMinutes = ReflectCache.GetProp(visit, ReflectCache.VisitStopDurationMinutes, 0);
+                relativeTimes = ReflectCache.GetProp(visit, ReflectCache.VisitRelativeTimes, false);
+                departed = ReflectCache.GetField(visit, ReflectCache.VisitDeparted, false);
+
+                if (ReflectCache.VisitPlatformNumber != null)
+                {
+                    var val = ReflectCache.VisitPlatformNumber.GetValue(visit);
+                    if (val != null) platformNumber = Convert.ToInt32(val);
+                }
+
+                if (!relativeTimes)
+                    departureGameTime = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(visit));
+
+                var station = ReflectCache.VisitStation?.GetValue(visit);
+                if (station == null) return;
+
+                ReflectCache.EnsureStationTypes(null, station.GetType());
+                if (ReflectCache.StationFriendlyName != null && ReflectCache.StationFriendlyName.GetMethod != null)
+                    stationName = ReflectCache.StationFriendlyName.GetValue(station) as string ?? "";
+                if (string.IsNullOrEmpty(stationName) && ReflectCache.StationName != null && ReflectCache.StationName.GetMethod != null)
+                    stationName = ReflectCache.StationName.GetValue(station) as string ?? "";
+                if (string.IsNullOrEmpty(stationName))
+                    stationName = station.ToString() ?? "";
+            }
+            catch { }
+        }
+
+        private static double? GetTimeSpanTotalSeconds(object value)
+        {
+            return value is TimeSpan time ? time.TotalSeconds : (double?)null;
         }
 
         private static string GetStopReasons(object train)

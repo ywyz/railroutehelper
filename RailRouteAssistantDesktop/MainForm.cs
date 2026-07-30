@@ -31,7 +31,7 @@ namespace RailRouteAssistantDesktop
         // ===== 语音播报 =====
         private VoiceEngine _voice;
         private CheckBox _muteCheck;                    // 静音开关
-        // 状态追踪：原始车号（合并车号未拆分）→ 上一次状态。用于检测状态变化触发播报。
+        // 状态追踪：游戏列车 ID（无 ID 时回退原始车号）→ 上一次状态。用于检测状态变化触发播报。
         private readonly Dictionary<string, TrainPrevState> _prevStates = new();
         // 防重复：(车号|播报类型) → 上次播报的 UTC 时间
         private readonly Dictionary<string, DateTime> _lastAnnounce = new();
@@ -363,6 +363,7 @@ namespace RailRouteAssistantDesktop
                     foreach (var t in trainsEl.EnumerateArray())
                         _trains.Add(new TrainData
                         {
+                            Id = t.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : "",
                             Name = t.GetProperty("name").GetString() ?? "?",
                             Speed = t.GetProperty("speed").GetInt32(),
                             TargetSpeed = t.GetProperty("targetSpeed").GetSingle(),
@@ -378,6 +379,17 @@ namespace RailRouteAssistantDesktop
                             SignalState = t.GetProperty("signalState").GetString() ?? "",
                             Platform = t.GetProperty("platform").GetInt32(),
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
+                            NextStationNonStop = t.TryGetProperty("nextStationNonStop", out var nsn) && nsn.ValueKind is JsonValueKind.True or JsonValueKind.False && nsn.GetBoolean(),
+                            ActualVisitCount = t.TryGetProperty("actualVisitCount", out var avc) && avc.ValueKind == JsonValueKind.Number ? avc.GetInt32() : 0,
+                            LastVisitStation = t.TryGetProperty("lastVisitStation", out var lvs) && lvs.ValueKind == JsonValueKind.String ? lvs.GetString() ?? "" : "",
+                            LastVisitPlatform = t.TryGetProperty("lastVisitPlatform", out var lvp) && lvp.ValueKind == JsonValueKind.Number ? lvp.GetInt32() : 0,
+                            LastVisitNonStop = t.TryGetProperty("lastVisitNonStop", out var lvns) && lvns.ValueKind is JsonValueKind.True or JsonValueKind.False && lvns.GetBoolean(),
+                            LastVisitStopMinutes = t.TryGetProperty("lastVisitStopMinutes", out var lvsm) && lvsm.ValueKind == JsonValueKind.Number ? lvsm.GetInt32() : 0,
+                            LastVisitDeparted = t.TryGetProperty("lastVisitDeparted", out var lvd) && lvd.ValueKind is JsonValueKind.True or JsonValueKind.False && lvd.GetBoolean(),
+                            CurrentStation = t.TryGetProperty("currentStation", out var cs) && cs.ValueKind == JsonValueKind.String ? cs.GetString() ?? "" : "",
+                            CurrentPlatform = t.TryGetProperty("currentPlatform", out var cp) && cp.ValueKind == JsonValueKind.Number ? cp.GetInt32() : 0,
+                            CurrentStopMinutes = t.TryGetProperty("currentStopMinutes", out var csm) && csm.ValueKind == JsonValueKind.Number ? csm.GetInt32() : 0,
+                            DepartureRemainingSec = t.TryGetProperty("departureRemainingSec", out var drs) && drs.ValueKind == JsonValueKind.Number ? drs.GetDouble() : null,
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
                             NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
                             NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
@@ -560,8 +572,8 @@ namespace RailRouteAssistantDesktop
         /// 在 RefreshData 中、ExpandMergedTrains 之前调用，用原始车号追踪状态。
         /// 触发点：
         ///   入图：OnBoard 由 false→true（首次见到不算，避免启动时全员播报）
-        ///   停站：速度 >0→0 且停车原因含 Station
-        ///   发车：速度 0→>0 且此前为停站状态
+        ///   到站/通过：ActualVisitCount 增加；LastVisitNonStop 区分两类访问
+        ///   发车：最近一次实际访问的 Departed 由 false→true，速度变化仅作兼容性兜底
         /// 防重复：同车号+同类型 30 秒内不重复
         /// </summary>
         private void DetectAndAnnounce()
@@ -571,23 +583,26 @@ namespace RailRouteAssistantDesktop
             if (!_trainInfo.IsLoaded) return;  // 车次库未加载则不播报（缺终到站）
 
             var nowUtc = DateTime.UtcNow;
-            // 本次刷新见到的原始车号集合，用于清理失效的追踪状态
-            var seenNames = new HashSet<string>();
+            // 本次刷新见到的列车状态键集合，用于清理失效的追踪状态
+            var seenStateKeys = new HashSet<string>();
 
             foreach (var t in _trains)
             {
                 if (string.IsNullOrEmpty(t.Name) || t.Name == "?") continue;
-                seenNames.Add(t.Name);
+                string stateKey = GetTrainStateKey(t);
+                seenStateKeys.Add(stateKey);
 
-                _prevStates.TryGetValue(t.Name, out var prev);
-                bool hadPrev = _prevStates.ContainsKey(t.Name);
+                _prevStates.TryGetValue(stateKey, out var prev);
+                bool hadPrev = _prevStates.ContainsKey(stateKey);
 
-                bool curStationStop = !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+                bool curStationStop = IsStationStop(t);
                 var cur = new TrainPrevState
                 {
                     OnBoard = t.OnBoard,
                     Speed = t.Speed,
-                    WasStationStop = curStationStop
+                    WasStationStop = curStationStop,
+                    ActualVisitCount = t.ActualVisitCount,
+                    LastVisitDeparted = t.LastVisitDeparted
                 };
 
                 // 仅在已有上一帧状态时判断状态变化（避免启动时全员播报）
@@ -595,51 +610,111 @@ namespace RailRouteAssistantDesktop
                 {
                     // 拆分合并车号：播报用第一段车号
                     string announceCode = TrySplitMergedTrainNumber(t.Name, out var p1, out _) ? p1 : t.Name;
+                    string dest = LookupDestination(announceCode);
 
                     // 1. 入图：OnBoard false→true
                     if (!prev.OnBoard && t.OnBoard)
                     {
                         if (ShouldAnnounce(announceCode, "arriving", nowUtc))
                         {
-                            string dest = LookupDestination(announceCode);
-                            _voice.Enqueue(VoiceEngine.AnnouncementType.Arriving, announceCode, dest, "", 0, 0);
-                            Console.WriteLine($"[Voice] 入图: {announceCode} 开往{dest}");
+                            _voice.Enqueue(new VoiceEngine.Announcement
+                            {
+                                Type = VoiceEngine.AnnouncementType.Arriving,
+                                TrainCode = announceCode,
+                                Destination = dest,
+                                NextStation = StripEnglishPrefix(t.NextStation),
+                                NextPlatform = t.Platform
+                            });
+                            Console.WriteLine($"[Voice] 入图: {announceCode} 开往{dest} -> {t.NextStation}{t.Platform}道");
                         }
                     }
-                    // 2. 停站：速度 >0→0 且为到站停车
-                    else if (prev.Speed > 0 && t.Speed == 0 && curStationStop)
+
+                    // 2. 一次实际访问已经完成：NonStop=true 为通过，否则为到站停车。
+                    bool hasNewVisit = t.ActualVisitCount > prev.ActualVisitCount;
+                    if (hasNewVisit && t.ActualVisitCount > 0 && t.LastVisitNonStop)
                     {
-                        if (ShouldAnnounce(announceCode, "stopped", nowUtc))
+                        if (ShouldAnnounce(announceCode, $"passing-{t.ActualVisitCount}", nowUtc))
                         {
-                            string dest = LookupDestination(announceCode);
-                            string station = StripEnglishPrefix(t.NextStation);
-                            int platform = t.Platform;
-                            _voice.Enqueue(VoiceEngine.AnnouncementType.StoppedAtStation, announceCode, dest, station, platform, 0);
-                            Console.WriteLine($"[Voice] 停站: {announceCode} @ {station}{platform}台 开往{dest}");
+                            _voice.Enqueue(new VoiceEngine.Announcement
+                            {
+                                Type = VoiceEngine.AnnouncementType.Passing,
+                                TrainCode = announceCode,
+                                Destination = dest,
+                                Station = StripEnglishPrefix(t.LastVisitStation),
+                                Platform = t.LastVisitPlatform,
+                                NextStation = StripEnglishPrefix(t.NextStation),
+                                NextPlatform = t.Platform
+                            });
+                            Console.WriteLine($"[Voice] 通过: {announceCode} @ {t.LastVisitStation}{t.LastVisitPlatform}道 -> {t.NextStation}{t.Platform}道");
                         }
                     }
-                    // 3. 发车：速度 0→>0 且此前为停站
-                    else if (prev.Speed == 0 && t.Speed > 0 && prev.WasStationStop)
+                    else if (hasNewVisit && t.ActualVisitCount > 0)
                     {
-                        if (ShouldAnnounce(announceCode, "departed", nowUtc))
+                        if (ShouldAnnounce(announceCode, $"stopped-{t.ActualVisitCount}", nowUtc))
                         {
-                            string dest = LookupDestination(announceCode);
-                            int delayMin = t.Delay > 0 ? (int)Math.Round(t.Delay / 60.0) : 0;
-                            _voice.Enqueue(VoiceEngine.AnnouncementType.Departed, announceCode, dest, "", 0, delayMin);
-                            Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest} 晚点{delayMin}分");
+                            string station = !string.IsNullOrEmpty(t.CurrentStation) ? t.CurrentStation : t.LastVisitStation;
+                            int platform = t.CurrentPlatform > 0 ? t.CurrentPlatform : t.LastVisitPlatform;
+                            int stopMinutes = t.CurrentStopMinutes > 0 ? t.CurrentStopMinutes : t.LastVisitStopMinutes;
+                            _voice.Enqueue(new VoiceEngine.Announcement
+                            {
+                                Type = VoiceEngine.AnnouncementType.StoppedAtStation,
+                                TrainCode = announceCode,
+                                Destination = dest,
+                                Station = StripEnglishPrefix(station),
+                                Platform = platform,
+                                StopMinutes = stopMinutes
+                            });
+                            Console.WriteLine($"[Voice] 停站: {announceCode} @ {station}{platform}台 停{stopMinutes}分 开往{dest}");
                         }
+                    }
+
+                    // 3. 发车：优先使用游戏的 Departed 标记；旧插件数据缺该字段时回退速度变化。
+                    bool departed = prev.WasStationStop &&
+                        ((!prev.LastVisitDeparted && t.LastVisitDeparted) || (prev.Speed == 0 && t.Speed > 0));
+                    if (departed && ShouldAnnounce(announceCode, $"departed-{t.ActualVisitCount}", nowUtc))
+                    {
+                        bool hasNextMapStop = IsMapStop(t.NextStation, t.NextStationNonStop);
+                        _voice.Enqueue(new VoiceEngine.Announcement
+                        {
+                            Type = VoiceEngine.AnnouncementType.Departed,
+                            TrainCode = announceCode,
+                            Destination = dest,
+                            NextStation = hasNextMapStop ? StripEnglishPrefix(t.NextStation) : "",
+                            NextPlatform = hasNextMapStop ? t.Platform : 0,
+                            // 只要游戏给出正延误就播报“晚点”；不足一分钟按 1 分钟提示，
+                            // 避免 20 秒延误被四舍五入成“正点”。
+                            DelayMinutes = t.Delay > 0 ? Math.Max(1, (int)Math.Ceiling(t.Delay / 60.0)) : 0
+                        });
+                        Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest}" +
+                            (hasNextMapStop ? $" -> {t.NextStation}{t.Platform}道" : "（出图/无下一停站）"));
                     }
                 }
 
-                _prevStates[t.Name] = cur;
+                _prevStates[stateKey] = cur;
             }
 
             // 清理失效追踪状态（列车已完成/消失），下次该车号再出现时按新车处理
-            if (_prevStates.Count > seenNames.Count)
+            if (_prevStates.Count > seenStateKeys.Count)
             {
-                var stale = _prevStates.Keys.Where(k => !seenNames.Contains(k)).ToList();
+                var stale = _prevStates.Keys.Where(k => !seenStateKeys.Contains(k)).ToList();
                 foreach (var k in stale) _prevStates.Remove(k);
             }
+        }
+
+        private static string GetTrainStateKey(TrainData t)
+        {
+            return !string.IsNullOrEmpty(t.Id) ? $"id:{t.Id}" : $"name:{t.Name}";
+        }
+
+        private static bool IsStationStop(TrainData t)
+        {
+            return t.OnBoard && t.Speed == 0 && !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+        }
+
+        private static bool IsMapStop(string station, bool nonStop)
+        {
+            return !nonStop && !string.IsNullOrWhiteSpace(station) &&
+                !station.Contains("方向", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -698,12 +773,18 @@ namespace RailRouteAssistantDesktop
         {
             return new TrainData
             {
-                Name = t.Name, Speed = t.Speed, TargetSpeed = t.TargetSpeed, Delay = t.Delay,
+                Id = t.Id, Name = t.Name, Speed = t.Speed, TargetSpeed = t.TargetSpeed, Delay = t.Delay,
                 CanDepart = t.CanDepart, Finished = t.Finished, BrokenDown = t.BrokenDown,
                 OnBoard = t.OnBoard, Waiting = t.Waiting, Lookahead = t.Lookahead, NeedsRoute = t.NeedsRoute,
                 HasSignal = t.HasSignal, SignalState = t.SignalState,
                 SignalAllocationState = t.SignalAllocationState, FrontAllocationState = t.FrontAllocationState,
-                Platform = t.Platform, NextStation = t.NextStation, StopReasons = t.StopReasons,
+                Platform = t.Platform, NextStation = t.NextStation, NextStationNonStop = t.NextStationNonStop,
+                ActualVisitCount = t.ActualVisitCount, LastVisitStation = t.LastVisitStation,
+                LastVisitPlatform = t.LastVisitPlatform, LastVisitNonStop = t.LastVisitNonStop,
+                LastVisitStopMinutes = t.LastVisitStopMinutes, LastVisitDeparted = t.LastVisitDeparted,
+                CurrentStation = t.CurrentStation, CurrentPlatform = t.CurrentPlatform,
+                CurrentStopMinutes = t.CurrentStopMinutes, DepartureRemainingSec = t.DepartureRemainingSec,
+                StopReasons = t.StopReasons,
                 NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince
             };
         }
@@ -729,17 +810,31 @@ namespace RailRouteAssistantDesktop
             return station;
         }
 
+        private static string FormatDepartureStatus(TrainData t)
+        {
+            if (!t.DepartureRemainingSec.HasValue) return "距发车--";
+
+            double remaining = Math.Max(0, t.DepartureRemainingSec.Value);
+            if (remaining <= 0)
+                return t.CanDepart ? "即将发车" : "发车时刻已到（待进路）";
+
+            var ts = TimeSpan.FromSeconds(remaining);
+            return ts.TotalMinutes >= 1
+                ? $"还有{(int)ts.TotalMinutes}分{ts.Seconds}秒开车"
+                : $"还有{ts.Seconds}秒开车";
+        }
+
         private void UpdateTrainItem(ListViewItem item, TrainData t)
         {
             var delayStr = t.Delay > 0 ? $"+{(int)t.Delay}s" : t.Delay < 0 ? $"{(int)t.Delay}s" : "";
 
-            // 状态：停站状态 + 停车时长 + 发车倒计时
+            // 状态：停站状态 + 停车时长 + 本站发车倒计时
             var statusParts = new List<string>();
             if (t.Waiting) statusParts.Add("等待入图");
             if (t.BrokenDown) statusParts.Add("故障");
             if (t.Finished) statusParts.Add("完成");
 
-            bool isStationStop = t.OnBoard && t.Speed == 0 && !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+            bool isStationStop = IsStationStop(t);
             bool isRunning = t.OnBoard && t.Speed > 0 && !t.BrokenDown && !t.Finished;
 
             if (isStationStop)
@@ -753,15 +848,8 @@ namespace RailRouteAssistantDesktop
                         ? $"已停{(int)sts.TotalMinutes}分{sts.Seconds}秒"
                         : $"已停{sts.Seconds}秒");
                 }
-                // 显示发车倒计时（NextPrepareSec 为剩余秒数）
-                if (t.NextPrepareSec.HasValue && t.NextPrepareSec.Value > 0)
-                {
-                    var ts = TimeSpan.FromSeconds(t.NextPrepareSec.Value);
-                    if (ts.TotalMinutes >= 1)
-                        statusParts.Add($"{(int)ts.TotalMinutes}分{ts.Seconds}秒发车");
-                    else
-                        statusParts.Add($"{ts.Seconds}秒发车");
-                }
+                // 当前 StationVisit.To - 游戏当前时间；绝不使用下一交路的 NextPrepareSec。
+                statusParts.Add(FormatDepartureStatus(t));
             }
             else if (isRunning)
             {
@@ -792,7 +880,7 @@ namespace RailRouteAssistantDesktop
             if (!t.OnBoard)
                 signalStr = "";
             else if (!t.HasSignal)
-                signalStr = "无信号";
+                signalStr = "—";
             else if (t.SignalAllocationState == 1)
                 signalStr = "开放";
             else if (t.SignalAllocationState == 0)
@@ -800,8 +888,8 @@ namespace RailRouteAssistantDesktop
             else if (t.SignalAllocationState == 2)
                 signalStr = "占用";
             else
-                // AllocationState 未知（-1），回退到目标速度判断
-                signalStr = t.TargetSpeed > 0.5f ? "开放" : "关闭";
+                // 未能读到紧邻下一座信号时保守显示未知，绝不再用减速臆断“关闭”。
+                signalStr = "未知";
 
             // 前方停站（仅站名，去掉英文前缀）+ 站台号单独一列
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
@@ -829,9 +917,10 @@ namespace RailRouteAssistantDesktop
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
 
-            // 到站停车是正常状态，不标红（即使速度为0/信号显示关闭）
-            // 信号关闭的判断改为基于实际 AllocationState==0(Free)，且非到站停车时才告警
-            bool signalActuallyClosed = t.OnBoard && t.HasSignal && t.SignalAllocationState == 0;
+            // 到站停车是正常状态，不标红（即使速度为0/信号显示关闭）。
+            // 颜色仅依据紧邻下一座信号的实际分配状态，未知状态不再以目标速度替代。
+            bool signalActuallyBlocked = t.OnBoard && t.HasSignal &&
+                t.SignalAllocationState >= 0 && t.SignalAllocationState != 1;
 
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
@@ -840,14 +929,10 @@ namespace RailRouteAssistantDesktop
                 // 正常到站停车：白色，不告警
                 item.ForeColor = Color.White;
             }
-            else if (signalActuallyClosed && (t.Speed == 0 || t.Speed <= 10))
+            else if (signalActuallyBlocked && (t.Speed == 0 || t.Speed <= 10))
                 item.ForeColor = ColorCritical;
-            else if (signalActuallyClosed)
+            else if (signalActuallyBlocked)
                 item.ForeColor = ColorWarning;
-            else if (t.OnBoard && t.Lookahead == 0 && t.Speed > 0)
-                item.ForeColor = ColorCritical;
-            else if (t.CanDepart && t.Lookahead == 0)
-                item.ForeColor = ColorCritical;
             else if (t.CanDepart)
                 item.ForeColor = ColorWarning;
             else if (t.Finished)
@@ -875,19 +960,27 @@ namespace RailRouteAssistantDesktop
         public bool OnBoard;
         public int Speed;
         public bool WasStationStop;  // 上一帧是否为到站停车（用于判断发车）
+        public int ActualVisitCount;
+        public bool LastVisitDeparted;
     }
 
     public class TrainData
     {
-        public string Name; public int Speed; public float TargetSpeed; public double Delay;
+        public string Id; public string Name; public int Speed; public float TargetSpeed; public double Delay;
         public bool CanDepart; public bool Finished; public bool BrokenDown;
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;
         public bool HasSignal; public string SignalState;
-        public int SignalAllocationState = -1;  // 信号机 AllocationState: -1=未知 0=Free 1=Allocated 2=Occupied
-        public int FrontAllocationState = -1;   // 前方轨道段 AllocationState
-        public int Platform; public string NextStation; public string StopReasons;
-        public double? NextPrepareSec;  // 距发车剩余秒数
+        public int SignalAllocationState = -1;  // 紧邻下一信号: -1=未知 0=Free 1=Allocated 2=Occupied 3=Shunting
+        public int FrontAllocationState = -1;   // 兼容旧 API；不参与信号告警判断
+        public int Platform; public string NextStation; public bool NextStationNonStop;
+        public int ActualVisitCount;
+        public string LastVisitStation; public int LastVisitPlatform; public bool LastVisitNonStop;
+        public int LastVisitStopMinutes; public bool LastVisitDeparted;
+        public string CurrentStation; public int CurrentPlatform; public int CurrentStopMinutes;
+        public double? DepartureRemainingSec;  // 当前停站距发车剩余秒数
+        public string StopReasons;
+        public double? NextPrepareSec;  // 下一交路准备剩余秒数（不用于当前停站倒计时）
         public double? NextArrivalSec;  // 距到达剩余秒数
         public double? NotMovingSince;  // 停车时长（秒）
     }
