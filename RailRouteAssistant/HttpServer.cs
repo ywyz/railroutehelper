@@ -133,6 +133,8 @@ namespace RailRouteAssistant
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
                 sb.Append("\"nextStationNonStop\":").Append(s.NextStationNonStop.ToString().ToLower()).Append(",");
                 sb.Append("\"actualVisitCount\":").Append(s.ActualVisitCount).Append(",");
+                sb.Append("\"scheduledVisitCount\":").Append(s.ScheduledVisitCount).Append(",");
+                sb.Append("\"scheduledVisitIndex\":").Append(s.CurrentScheduledVisitIndex).Append(",");
                 sb.Append("\"lastVisitStation\":").Append(JsonStr(s.LastVisitStationName)).Append(",");
                 sb.Append("\"lastVisitPlatform\":").Append(s.LastVisitPlatformNumber).Append(",");
                 sb.Append("\"lastVisitNonStop\":").Append(s.LastVisitNonStop.ToString().ToLower()).Append(",");

@@ -45,6 +45,9 @@ namespace RailRouteAssistant
         // 最近一次实际访问。游戏在到站/通过后会把本站从 NextStationVisits 移除，
         // 因而这里才是播报本站与识别通过站的可靠来源。
         public int ActualVisitCount;
+        public int ScheduledVisitCount;      // 本趟列车地图内计划访问总数，用于识别首站/末站
+        // 最近一次实际访问（或当前停站）在 ScheduledVisits 中的零基索引；-1 表示未知。
+        public int CurrentScheduledVisitIndex = -1;
         public string LastVisitStationName;
         public int LastVisitPlatformNumber;
         public bool LastVisitNonStop;

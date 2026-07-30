@@ -846,6 +846,8 @@ namespace RailRouteAssistant
             {
                 var actualVisits = ReflectCache.TrainActualVisits?.GetValue(train);
                 snap.ActualVisitCount = CountSegments(actualVisits);
+                var scheduledVisits = ReflectCache.TrainScheduledVisits?.GetValue(train);
+                snap.ScheduledVisitCount = CountSegments(scheduledVisits);
 
                 var visit = ReflectCache.TrainLastVisited?.GetValue(train);
                 if (visit == null) return;
@@ -879,6 +881,10 @@ namespace RailRouteAssistant
 
                 if (scheduledVisits != null && visitIndex >= 0 && visitIndex < scheduledVisits.Count)
                 {
+                    snap.ScheduledVisitCount = scheduledVisits.Count;
+                    // CurrentStopIndex 已在游戏记录到站/通过时递增，减一后正是本次访问。
+                    // 这个索引用于严格排除地图首站和末站的通过/发车预告。
+                    snap.CurrentScheduledVisitIndex = visitIndex;
                     var visit = scheduledVisits[visitIndex];
                     if (visit != null)
                     {

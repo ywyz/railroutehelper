@@ -55,7 +55,7 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>播报类型</summary>
-        public enum AnnouncementType { Arriving, StoppedAtStation, Departed, Passing }
+        public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing }
 
         /// <summary>一条播报所需的具名字段，避免将当前站与下一站的位置参数混用。</summary>
         public sealed class Announcement
@@ -91,14 +91,10 @@ namespace RailRouteAssistantDesktop
             switch (announcement.Type)
             {
                 case AnnouncementType.Arriving:
-                    // 开往 xx 方向的列车 车号 已经接近，下一站 xx x道，请做好接车准备。
+                    // 等待入图：开往 xx 方向的列车 车号 接近。
                     AddDirectionPrefix(segs, dest);
                     AddTrainNumber(segs, announcement.TrainCode);
-                    AddTts(segs, "已经接近，");
-                    if (AddNextStation(segs, announcement.NextStation, announcement.NextPlatform))
-                        AddTts(segs, "，请做好接车准备。");
-                    else
-                        AddTts(segs, "请做好接车准备。");
+                    AddTts(segs, "接近。");
                     break;
 
                 case AnnouncementType.StoppedAtStation:
@@ -117,6 +113,13 @@ namespace RailRouteAssistantDesktop
                     {
                         AddTts(segs, "，本次停车时间待定。");
                     }
+                    break;
+
+                case AnnouncementType.PreDeparture:
+                    // 中间站发车前一分钟：xx站 xx道 车号列车 即将发车，请做好准备。
+                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "道");
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTts(segs, "列车即将发车，请做好准备。");
                     break;
 
                 case AnnouncementType.Departed:
