@@ -13,6 +13,7 @@ namespace RailRouteAssistantDesktop
     {
         private readonly HttpClient _http;
         private readonly System.Windows.Forms.Timer _timer;
+        private readonly TrainInfoService _trainInfo;
 
         private ListView _alertList;
         private ListView _trainList;
@@ -34,11 +35,18 @@ namespace RailRouteAssistantDesktop
 
         public MainForm()
         {
-            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            _trainInfo = new TrainInfoService(_http);
             SetupUI();
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };
             _timer.Tick += async (s, e) => await RefreshData();
             _timer.Start();
+            // 后台加载车次信息（不阻塞 UI）
+            _ = Task.Run(async () =>
+            {
+                await _trainInfo.LoadAsync();
+                Console.WriteLine($"[TrainInfo] 加载完成: {_trainInfo.Count} 趟车次");
+            });
         }
 
         private void SetupUI()
@@ -88,14 +96,15 @@ namespace RailRouteAssistantDesktop
                 ForeColor = Color.White,
                 Font = new Font("Microsoft YaHei UI", 8.5F)
             };
-            _trainList.Columns.Add("车号", 75);
+            _trainList.Columns.Add("车号", 70);
+            _trainList.Columns.Add("始发", 80);
+            _trainList.Columns.Add("终到", 80);
             _trainList.Columns.Add("km/h", 40);
             _trainList.Columns.Add("延误", 45);
             _trainList.Columns.Add("信号", 50);
-            _trainList.Columns.Add("状态", 150);
+            _trainList.Columns.Add("状态", 160);
             _trainList.Columns.Add("前方停站", 90);
             _trainList.Columns.Add("站台", 40);
-            _trainList.Columns.Add("转向", 40);
 
             var alertHeader = new Label
             {
@@ -329,6 +338,9 @@ namespace RailRouteAssistantDesktop
                             FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
                         });
 
+                // 拆分合并车号（如 G4545G4546 → G4545 / G4546 两行）
+                _trains = ExpandMergedTrains(_trains);
+
                 UpdateUI();
 
                 // 周期性维持置顶：游戏窗口偶尔会盖住本窗口，每秒检查一次
@@ -397,7 +409,8 @@ namespace RailRouteAssistantDesktop
             else
             {
                 var timeStr = !string.IsNullOrEmpty(_gameTime) ? $"游戏时间 {_gameTime}  |  " : "";
-                _statusLabel.Text = $"  {timeStr}已连接  |  在线 {onBoard}  等待 {waiting}  总计 {_trains.Count}";
+                var dbStr = _trainInfo.IsLoaded ? $"  |  车次库 {_trainInfo.Count}" : "  |  车次库加载中";
+                _statusLabel.Text = $"  {timeStr}已连接  |  在线 {onBoard}  等待 {waiting}  总计 {_trains.Count}{dbStr}";
                 _statusLabel.ForeColor = Color.LightGreen;
             }
 
@@ -455,30 +468,83 @@ namespace RailRouteAssistantDesktop
         private ListViewItem CreateTrainItem(TrainData t)
         {
             var item = new ListViewItem(t.Name);
+            item.SubItems.Add(""); // 始发
+            item.SubItems.Add(""); // 终到
             item.SubItems.Add(""); // km/h
             item.SubItems.Add(""); // 延误
             item.SubItems.Add(""); // 信号
             item.SubItems.Add(""); // 状态
             item.SubItems.Add(""); // 前方停站
             item.SubItems.Add(""); // 站台
-            item.SubItems.Add(""); // 转向
             UpdateTrainItem(item, t);
             return item;
         }
 
         /// <summary>
         /// 检测合并车号（如 G3342G3343，两个车次拼在一起，需要中途换向）
+        /// 格式：字母+数字+字母+数字
         /// </summary>
         private static bool IsMergedTrainNumber(string name)
         {
+            return TrySplitMergedTrainNumber(name, out _, out _);
+        }
+
+        /// <summary>
+        /// 尝试拆分合并车号。如 "G4545G4546" → ("G4545","G4546")。
+        /// 标准格式：字母+数字+字母+数字（两个车次拼接）。
+        /// </summary>
+        private static bool TrySplitMergedTrainNumber(string name, out string part1, out string part2)
+        {
+            part1 = null; part2 = null;
             if (string.IsNullOrEmpty(name) || name.Length < 4) return false;
-            // 匹配：字母+数字+字母+数字 的模式
-            int letterCount = 0;
-            for (int i = 0; i < name.Length; i++)
+            var m = System.Text.RegularExpressions.Regex.Match(name, @"^([A-Za-z]\d+)([A-Za-z]\d+)$");
+            if (!m.Success) return false;
+            part1 = m.Groups[1].Value;
+            part2 = m.Groups[2].Value;
+            return true;
+        }
+
+        /// <summary>
+        /// 拆分合并车号：将 "G4545G4546" 拆成两行 TrainData（各自车号），共享同一列车的实时运行状态。
+        /// G4545 行：车号=G4545，始发=G4545始发，终到=G4546始发（换向站）
+        /// G4546 行：车号=G4546，始发=G4546始发（换向站），终到=G4546终到
+        /// 非合并车号原样返回。
+        /// </summary>
+        private List<TrainData> ExpandMergedTrains(List<TrainData> trains)
+        {
+            var result = new List<TrainData>(trains.Count);
+            foreach (var t in trains)
             {
-                if (char.IsLetter(name[i])) letterCount++;
+                if (TrySplitMergedTrainNumber(t.Name, out var p1, out var p2))
+                {
+                    // 拆成两行，复制全部运行状态
+                    var row1 = CloneTrain(t);
+                    row1.Name = p1;
+                    var row2 = CloneTrain(t);
+                    row2.Name = p2;
+                    result.Add(row1);
+                    result.Add(row2);
+                }
+                else
+                {
+                    result.Add(t);
+                }
             }
-            return letterCount >= 2;
+            return result;
+        }
+
+        private static TrainData CloneTrain(TrainData t)
+        {
+            return new TrainData
+            {
+                Name = t.Name, Speed = t.Speed, TargetSpeed = t.TargetSpeed, Delay = t.Delay,
+                CanDepart = t.CanDepart, Finished = t.Finished, BrokenDown = t.BrokenDown,
+                OnBoard = t.OnBoard, Waiting = t.Waiting, Lookahead = t.Lookahead, NeedsRoute = t.NeedsRoute,
+                HasSignal = t.HasSignal, SignalState = t.SignalState,
+                SignalAllocationState = t.SignalAllocationState, FrontAllocationState = t.FrontAllocationState,
+                Platform = t.Platform, NextStation = t.NextStation, StopReasons = t.StopReasons,
+                NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince
+            };
         }
 
         /// <summary>
@@ -580,17 +646,24 @@ namespace RailRouteAssistantDesktop
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
-            // 转向：合并车号需要转向
-            var turnStr = IsMergedTrainNumber(t.Name) ? "需转向" : "";
+            // 始发/终到：从车次信息查询；合并车号已拆分，每行用各自车号查询
+            var originStr = "";
+            var destStr = "";
+            if (_trainInfo.TryLookup(t.Name, out var info))
+            {
+                originStr = StripEnglishPrefix(info.Origin);
+                destStr = StripEnglishPrefix(info.Destination);
+            }
 
             item.Text = t.Name;
-            item.SubItems[1].Text = $"{t.Speed}";
-            item.SubItems[2].Text = delayStr;
-            item.SubItems[3].Text = signalStr;
-            item.SubItems[4].Text = status;
-            item.SubItems[5].Text = stationStr;
-            item.SubItems[6].Text = platformStr;
-            item.SubItems[7].Text = turnStr;
+            item.SubItems[1].Text = originStr;
+            item.SubItems[2].Text = destStr;
+            item.SubItems[3].Text = $"{t.Speed}";
+            item.SubItems[4].Text = delayStr;
+            item.SubItems[5].Text = signalStr;
+            item.SubItems[6].Text = status;
+            item.SubItems[7].Text = stationStr;
+            item.SubItems[8].Text = platformStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
