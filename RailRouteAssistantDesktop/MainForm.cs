@@ -324,7 +324,9 @@ namespace RailRouteAssistantDesktop
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
                             NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
                             NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
-                            NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null
+                            NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null,
+                            SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
+                            FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
                         });
 
                 UpdateUI();
@@ -479,6 +481,27 @@ namespace RailRouteAssistantDesktop
             return letterCount >= 2;
         }
 
+        /// <summary>
+        /// 去掉站名开头的英文/数字前缀（含分隔符），只保留中文及之后的部分。
+        /// 例如 "Nanjing南京站" -> "南京站"；"Station_01 北京南" -> "北京南"。
+        /// 若站名中无中文字符，则原样返回。
+        /// </summary>
+        private static string StripEnglishPrefix(string station)
+        {
+            if (string.IsNullOrEmpty(station)) return station;
+            // 找第一个 CJK 统一汉字（\u4e00-\u9fff）的位置
+            for (int i = 0; i < station.Length; i++)
+            {
+                char c = station[i];
+                if (c >= '\u4e00' && c <= '\u9fff')
+                {
+                    return station.Substring(i);
+                }
+            }
+            // 无中文，原样返回
+            return station;
+        }
+
         private void UpdateTrainItem(ListViewItem item, TrainData t)
         {
             var delayStr = t.Delay > 0 ? $"+{(int)t.Delay}s" : t.Delay < 0 ? $"{(int)t.Delay}s" : "";
@@ -495,17 +518,13 @@ namespace RailRouteAssistantDesktop
             if (isStationStop)
             {
                 statusParts.Add("停站");
-                // 停车时长（基于 NotMovingSince 时间戳）
-                if (t.NotMovingSince.HasValue)
+                // 停车时长（NotMovingSince 现在直接是停车时长秒数）
+                if (t.NotMovingSince.HasValue && t.NotMovingSince.Value > 0)
                 {
-                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - t.NotMovingSince.Value;
-                    if (stoppedSec > 0)
-                    {
-                        var sts = TimeSpan.FromSeconds(stoppedSec);
-                        statusParts.Add(sts.TotalMinutes >= 1
-                            ? $"已停{(int)sts.TotalMinutes}分{sts.Seconds}秒"
-                            : $"已停{sts.Seconds}秒");
-                    }
+                    var sts = TimeSpan.FromSeconds(t.NotMovingSince.Value);
+                    statusParts.Add(sts.TotalMinutes >= 1
+                        ? $"已停{(int)sts.TotalMinutes}分{sts.Seconds}秒"
+                        : $"已停{sts.Seconds}秒");
                 }
                 // 显示发车倒计时（NextPrepareSec 为剩余秒数）
                 if (t.NextPrepareSec.HasValue && t.NextPrepareSec.Value > 0)
@@ -529,27 +548,36 @@ namespace RailRouteAssistantDesktop
             {
                 statusParts.Add("停车");
                 // 非到站停车也显示停车时长
-                if (t.NotMovingSince.HasValue)
+                if (t.NotMovingSince.HasValue && t.NotMovingSince.Value > 0)
                 {
-                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - t.NotMovingSince.Value;
-                    if (stoppedSec > 0)
-                    {
-                        var sts = TimeSpan.FromSeconds(stoppedSec);
-                        statusParts.Add(sts.TotalMinutes >= 1
-                            ? $"已停{(int)sts.TotalMinutes}分"
-                            : $"已停{sts.Seconds}秒");
-                    }
+                    var sts = TimeSpan.FromSeconds(t.NotMovingSince.Value);
+                    statusParts.Add(sts.TotalMinutes >= 1
+                        ? $"已停{(int)sts.TotalMinutes}分"
+                        : $"已停{sts.Seconds}秒");
                 }
             }
 
             var status = string.Join(" ", statusParts);
 
-            var signalStr = !t.OnBoard ? "" :
-                t.TargetSpeed > 0.5f ? "开放" :
-                t.HasSignal ? "关闭" : "无信号";
+            // 信号显示：优先用 AllocationState 判断（1=Allocated 开放，0=Free 关闭），
+            // 到站停车时信号可能是开放的（进路已排），不应一律显示关闭
+            string signalStr;
+            if (!t.OnBoard)
+                signalStr = "";
+            else if (!t.HasSignal)
+                signalStr = "无信号";
+            else if (t.SignalAllocationState == 1)
+                signalStr = "开放";
+            else if (t.SignalAllocationState == 0)
+                signalStr = "关闭";
+            else if (t.SignalAllocationState == 2)
+                signalStr = "占用";
+            else
+                // AllocationState 未知（-1），回退到目标速度判断
+                signalStr = t.TargetSpeed > 0.5f ? "开放" : "关闭";
 
-            // 前方停站（仅站名）+ 站台号单独一列
-            var stationStr = !string.IsNullOrEmpty(t.NextStation) ? t.NextStation : "";
+            // 前方停站（仅站名，去掉英文前缀）+ 站台号单独一列
+            var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
             // 转向：合并车号需要转向
@@ -567,13 +595,20 @@ namespace RailRouteAssistantDesktop
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
 
-            bool signalClosed = t.OnBoard && t.TargetSpeed <= 0.5f;
+            // 到站停车是正常状态，不标红（即使速度为0/信号显示关闭）
+            // 信号关闭的判断改为基于实际 AllocationState==0(Free)，且非到站停车时才告警
+            bool signalActuallyClosed = t.OnBoard && t.HasSignal && t.SignalAllocationState == 0;
 
             if (t.BrokenDown)
                 item.ForeColor = ColorCritical;
-            else if (signalClosed && t.OnBoard && (t.Speed == 0 || t.Speed <= 10))
+            else if (isStationStop)
+            {
+                // 正常到站停车：白色，不告警
+                item.ForeColor = Color.White;
+            }
+            else if (signalActuallyClosed && (t.Speed == 0 || t.Speed <= 10))
                 item.ForeColor = ColorCritical;
-            else if (signalClosed && t.OnBoard)
+            else if (signalActuallyClosed)
                 item.ForeColor = ColorWarning;
             else if (t.OnBoard && t.Lookahead == 0 && t.Speed > 0)
                 item.ForeColor = ColorCritical;
@@ -606,9 +641,11 @@ namespace RailRouteAssistantDesktop
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;
         public bool HasSignal; public string SignalState;
+        public int SignalAllocationState = -1;  // 信号机 AllocationState: -1=未知 0=Free 1=Allocated 2=Occupied
+        public int FrontAllocationState = -1;   // 前方轨道段 AllocationState
         public int Platform; public string NextStation; public string StopReasons;
-        public double? NextPrepareSec;  // 下一站发车准备时间（秒）
-        public double? NextArrivalSec;  // 下一站到达时间（秒）
-        public double? NotMovingSince;  // 停车起始 unix 时间戳（秒）
+        public double? NextPrepareSec;  // 距发车剩余秒数
+        public double? NextArrivalSec;  // 距到达剩余秒数
+        public double? NotMovingSince;  // 停车时长（秒）
     }
 }

@@ -19,7 +19,8 @@ namespace RailRouteAssistant
         public bool IsOnBoard;
         public bool IsDisposed;
         public bool IsWaitingToBeSpawned;
-        public double? NotMovingSinceTimestamp;
+        public double? NotMovingSinceGameTime;  // 停车起始的游戏内绝对时间（TimeSpan.TotalSeconds）
+        public double? NotMovingDuration;       // 停车时长（秒），由采集线程用游戏时间差值算出
         public int LookaheadCount;
         public bool HasValidRoute;
         public bool NeedsRouteAhead;       // 是否需要前方进路
@@ -34,8 +35,10 @@ namespace RailRouteAssistant
         public int RouteRemainingSteps;    // 剩余区间数
         public int NextPlatformNumber;     // 下一站站台号
         public string NextStationName;
-        public double? NextPrepareTimeTotalSeconds;
-        public double? NextArrivalTimeTotalSeconds;
+        public double? NextPrepareTimeTotalSeconds;  // 距发车的剩余秒数（= NextPrepareGameTime - 当前游戏时间）
+        public double? NextArrivalTimeTotalSeconds;  // 距到达的剩余秒数（= NextArrivalGameTime - 当前游戏时间）
+        internal double? NextPrepareGameTime;        // 原始游戏内绝对时间（TimeSpan.TotalSeconds），采集后换算成剩余
+        internal double? NextArrivalGameTime;        // 原始游戏内绝对时间（TimeSpan.TotalSeconds），采集后换算成剩余
         public string StopReasons;
         public List<string> RouteStepTrackIds = new List<string>(); // 前方进路步骤的轨道标识
     }

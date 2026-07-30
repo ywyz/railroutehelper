@@ -220,10 +220,10 @@ namespace RailRouteAssistant
                         });
                     }
                 }
-                else if (!isStationStop && snap.NotMovingSinceTimestamp.HasValue)
+                else if (!isStationStop && snap.NotMovingDuration.HasValue)
                 {
-                    // 其他非到站停车 - 停车超时告警
-                    var stoppedSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - snap.NotMovingSinceTimestamp.Value;
+                    // 其他非到站停车 - 停车超时告警（停车时长已由采集线程用游戏时间差值算出）
+                    var stoppedSec = snap.NotMovingDuration.Value;
                     if (stoppedSec > 10)
                     {
                         var reason = !string.IsNullOrEmpty(snap.StopReasons) ? snap.StopReasons : "未知";

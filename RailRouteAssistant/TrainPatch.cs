@@ -115,21 +115,34 @@ namespace RailRouteAssistant
                     TrainNextStationVisit = AccessTools.Method(TrainType, "NextStationVisit");
                 }
 
-                // Semaphore
+                // Semaphore（注意：Semaphore 上 AllocationState 只有 set，getter 在基类 Node）
                 if (SemaphoreType != null)
                 {
                     var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
                     SemAllocationState = SemaphoreType.GetProperty("AllocationState", bf);
+                    // 若 Semaphore 上的 AllocationState 没有 getter（set-only 遮蔽），从基类 Node 取
+                    if (SemAllocationState == null || SemAllocationState.GetMethod == null)
+                    {
+                        var nodeType = AccessTools.TypeByName("Game.Railroad.Node");
+                        if (nodeType != null)
+                            SemAllocationState = nodeType.GetProperty("AllocationState", bf);
+                    }
                     SemType = SemaphoreType.GetProperty("Type", bf);
                     SemIsPendingRoute = SemaphoreType.GetProperty("IsPendingRoute", bf);
                     SemFront = SemaphoreType.GetProperty("Front", bf);
                 }
 
-                // Connection
+                // Connection（同样可能继承自 Node，确保拿到有 getter 的属性）
                 if (ConnectionType != null)
                 {
                     var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
                     ConnAllocationState = ConnectionType.GetProperty("AllocationState", bf);
+                    if (ConnAllocationState == null || ConnAllocationState.GetMethod == null)
+                    {
+                        var nodeType = AccessTools.TypeByName("Game.Railroad.Node");
+                        if (nodeType != null)
+                            ConnAllocationState = nodeType.GetProperty("AllocationState", bf);
+                    }
                     ConnName = ConnectionType.GetProperty("Name", bf);
                 }
 
@@ -305,7 +318,8 @@ namespace RailRouteAssistant
                 }
 
                 // 读取游戏内模拟时钟：Ctx.Deps -> GameControllers -> TimeController -> CurrentTime(TimeSpan)
-                DataStore.UpdateGameTime(TryGetGameTime(controllers));
+                var gameTimeSec = TryGetGameTime(controllers);
+                DataStore.UpdateGameTime(gameTimeSec);
 
                 // TrainRepository
                 var trGetter = AccessTools.PropertyGetter(controllers.GetType(), "TrainRepository");
@@ -336,6 +350,34 @@ namespace RailRouteAssistant
                 {
                     var snap = SnapshotTrain(train);
                     if (snap != null) snapshots.Add(snap);
+                }
+
+                // 用游戏内时间换算"剩余秒数"和"停车时长"
+                // （NextPrepare/NextArrival 是游戏内绝对时间点，NotMovingSince 也是游戏内绝对时间）
+                if (gameTimeSec.HasValue)
+                {
+                    double now = gameTimeSec.Value;
+                    foreach (var s in snapshots)
+                    {
+                        // 距发车剩余秒数（仅当未来时间点有效）
+                        if (s.NextPrepareGameTime.HasValue)
+                        {
+                            var rem = s.NextPrepareGameTime.Value - now;
+                            s.NextPrepareTimeTotalSeconds = rem > 0 ? rem : 0;
+                        }
+                        // 距到达剩余秒数
+                        if (s.NextArrivalGameTime.HasValue)
+                        {
+                            var rem = s.NextArrivalGameTime.Value - now;
+                            s.NextArrivalTimeTotalSeconds = rem > 0 ? rem : 0;
+                        }
+                        // 停车时长 = 当前游戏时间 - 停车起始时间
+                        if (s.NotMovingSinceGameTime.HasValue)
+                        {
+                            var dur = now - s.NotMovingSinceGameTime.Value;
+                            s.NotMovingDuration = dur > 0 ? dur : 0;
+                        }
+                    }
                 }
 
                 var alerts = AlertEngine.Evaluate(snapshots);
@@ -420,12 +462,12 @@ namespace RailRouteAssistant
                     if (delayVal is TimeSpan ts) snap.DelaySeconds = ts.TotalSeconds;
                 }
 
-                // NotMovingSince
+                // NotMovingSince —— 游戏内绝对时间（TimeSpan?），列车移动时为 null
                 if (ReflectCache.TrainNotMovingSince != null)
                 {
-                    var nm = ReflectCache.TrainNotMovingSince.GetValue(train) as DateTime?;
+                    var nm = ReflectCache.TrainNotMovingSince.GetValue(train) as TimeSpan?;
                     if (nm.HasValue)
-                        snap.NotMovingSinceTimestamp = nm.Value.ToUniversalTime().Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
+                        snap.NotMovingSinceGameTime = nm.Value.TotalSeconds;  // 游戏内绝对秒数
                 }
 
                 // SegmentsInLookahead
@@ -453,9 +495,9 @@ namespace RailRouteAssistant
                     var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
                     snap.HasValidRoute = ReflectCache.GetProp(leg, legType.GetProperty("HasValidRoute", bf), false);
                     var npt = legType.GetProperty("NextPrepareTime", bf);
-                    if (npt != null) snap.NextPrepareTimeTotalSeconds = (npt.GetValue(leg) as TimeSpan?)?.TotalSeconds;
+                    if (npt != null) snap.NextPrepareGameTime = (npt.GetValue(leg) as TimeSpan?)?.TotalSeconds;
                     var nat = legType.GetProperty("NextArrival", bf);
-                    if (nat != null) snap.NextArrivalTimeTotalSeconds = (nat.GetValue(leg) as TimeSpan?)?.TotalSeconds;
+                    if (nat != null) snap.NextArrivalGameTime = (nat.GetValue(leg) as TimeSpan?)?.TotalSeconds;
                 }
 
                 // 下一站
@@ -668,6 +710,18 @@ namespace RailRouteAssistant
 
                 int count = ReflectCache.SRCount != null ? Convert.ToInt32(ReflectCache.SRCount.GetValue(stopReasons)) : 0;
                 if (count == 0) return "";
+
+                // 枚举全部停车原因，用逗号拼接（之前只取 First() 会漏掉并存的其他原因，如 Station 不是第一个时）
+                var reasons = new List<string>();
+                var enumerable = stopReasons as System.Collections.IEnumerable;
+                if (enumerable != null)
+                {
+                    foreach (var r in enumerable)
+                    {
+                        if (r != null) reasons.Add(r.ToString());
+                    }
+                }
+                if (reasons.Count > 0) return string.Join(",", reasons);
 
                 if (ReflectCache.SRGetFirst != null)
                 {

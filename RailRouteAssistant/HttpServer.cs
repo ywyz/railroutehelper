@@ -132,7 +132,7 @@ namespace RailRouteAssistant
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
                 sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
                 sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
-                sb.Append("\"notMovingSince\":").Append(s.NotMovingSinceTimestamp.HasValue ? s.NotMovingSinceTimestamp.Value.ToString("F0") : "null");
+                sb.Append("\"notMovingSince\":").Append(s.NotMovingDuration.HasValue ? s.NotMovingDuration.Value.ToString("F0") : "null");
                 sb.Append("}");
             }
             sb.Append("],");
