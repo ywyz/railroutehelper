@@ -94,8 +94,7 @@ namespace RailRouteAssistantDesktop
                     break;
 
                 case AnnouncementType.StoppedAtStation:
-                    // 列车停站：开往xxxx方向的列车 车号 已经到达 站名，停靠x站台
-                    // 用现有音频"列车停靠在.wav" + 站名TTS + 数字 + "站台.wav"
+                    // 列车停站：列车停靠在 站名 x站台，开往xxx方向
                     AddAudio(segs, "列车停靠在.wav");
                     if (!string.IsNullOrEmpty(cur)) AddTts(segs, cur);
                     if (platform > 0) { AddDigit(segs, platform); AddAudio(segs, "站台.wav"); }
@@ -103,11 +102,8 @@ namespace RailRouteAssistantDesktop
                     {
                         AddTts(segs, "开往");
                         AddTts(segs, dest);
-                        AddTts(segs, "方向的");
+                        AddTts(segs, "方向");
                     }
-                    AddAudio(segs, "有乘坐.wav");
-                    AddTrainNumber(segs, trainCode);
-                    AddAudio(segs, "次列车.wav");
                     break;
 
                 case AnnouncementType.Departed:
