@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -26,6 +28,15 @@ namespace RailRouteAssistantDesktop
         private string _gameTime = "";                  // 游戏内模拟时钟 HH:MM:SS
         private readonly HashSet<string> _selectedTrainNames = new();  // refresh 间保留的选中车号
 
+        // ===== 语音播报 =====
+        private VoiceEngine _voice;
+        private CheckBox _muteCheck;                    // 静音开关
+        // 状态追踪：原始车号（合并车号未拆分）→ 上一次状态。用于检测状态变化触发播报。
+        private readonly Dictionary<string, TrainPrevState> _prevStates = new();
+        // 防重复：(车号|播报类型) → 上次播报的 UTC 时间
+        private readonly Dictionary<string, DateTime> _lastAnnounce = new();
+        private const double AnnounceCooldownSec = 30.0;  // 同车号同类型 30 秒内不重复
+
         private static readonly Color ColorCritical = Color.FromArgb(220, 50, 50);
         private static readonly Color ColorWarning = Color.FromArgb(230, 150, 30);
         private static readonly Color ColorInfo = Color.FromArgb(50, 130, 220);
@@ -38,6 +49,16 @@ namespace RailRouteAssistantDesktop
             _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             _trainInfo = new TrainInfoService(_http);
             SetupUI();
+            // 初始化语音播报引擎（音频目录 = 输出目录/assets/audio）
+            try
+            {
+                string audioDir = Path.Combine(AppContext.BaseDirectory, "assets", "audio");
+                if (Directory.Exists(audioDir))
+                    _voice = new VoiceEngine(audioDir);
+                else
+                    Console.WriteLine($"[Voice] 音频目录不存在: {audioDir}");
+            }
+            catch (Exception ex) { Console.WriteLine($"[Voice] 初始化失败: {ex.Message}"); }
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };
             _timer.Tick += async (s, e) => await RefreshData();
             _timer.Start();
@@ -76,6 +97,18 @@ namespace RailRouteAssistantDesktop
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(8, 0, 0, 0),
                 Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold)
+            };
+
+            // 静音开关：作为状态栏子控件浮在右侧
+            _muteCheck = new CheckBox
+            {
+                Text = "静音",
+                ForeColor = Color.LightGray, BackColor = ColorPanel,
+                Font = new Font("Microsoft YaHei UI", 8F),
+                AutoSize = false, Size = new Size(56, 20),
+                CheckAlign = ContentAlignment.MiddleLeft,
+                TextAlign = ContentAlignment.MiddleRight,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
 
             var trainHeader = new Label
@@ -150,6 +183,10 @@ namespace RailRouteAssistantDesktop
             Controls.Add(trainHeader);      // Top
             Controls.Add(_statusLabel);     // Top - index 最大，最先处理，最顶部
 
+            // 静音开关浮在状态栏右侧
+            _statusLabel.Controls.Add(_muteCheck);
+            PositionMuteCheckbox();
+
             // 右键菜单 - 复制
             var copyMenu = new ContextMenuStrip();
             var copyItem = new ToolStripMenuItem("复制选中行");
@@ -206,6 +243,17 @@ namespace RailRouteAssistantDesktop
                     TopMost = true;
                 }));
             };
+
+            // 窗口尺寸变化时重新定位静音开关
+            Resize += (s, e) => PositionMuteCheckbox();
+        }
+
+        /// <summary>把静音开关定位到状态栏右侧</summary>
+        private void PositionMuteCheckbox()
+        {
+            if (_muteCheck == null || _statusLabel == null) return;
+            _muteCheck.Top = (_statusLabel.Height - _muteCheck.Height) / 2;
+            _muteCheck.Left = _statusLabel.Width - _muteCheck.Width - 6;
         }
 
         /// <summary>
@@ -337,6 +385,9 @@ namespace RailRouteAssistantDesktop
                             SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
                             FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
                         });
+
+                // 语音播报：状态变化检测（用原始车号追踪，拆分前调用）
+                DetectAndAnnounce();
 
                 // 拆分合并车号（如 G4545G4546 → G4545 / G4546 两行）
                 _trains = ExpandMergedTrains(_trains);
@@ -501,6 +552,116 @@ namespace RailRouteAssistantDesktop
             if (!m.Success) return false;
             part1 = m.Groups[1].Value;
             part2 = m.Groups[2].Value;
+            return true;
+        }
+
+        /// <summary>
+        /// 语音播报：检测列车状态变化并触发播报。
+        /// 在 RefreshData 中、ExpandMergedTrains 之前调用，用原始车号追踪状态。
+        /// 触发点：
+        ///   入图：OnBoard 由 false→true（首次见到不算，避免启动时全员播报）
+        ///   停站：速度 >0→0 且停车原因含 Station
+        ///   发车：速度 0→>0 且此前为停站状态
+        /// 防重复：同车号+同类型 30 秒内不重复
+        /// </summary>
+        private void DetectAndAnnounce()
+        {
+            if (_voice == null) return;
+            if (_muteCheck?.Checked == true) return;
+            if (!_trainInfo.IsLoaded) return;  // 车次库未加载则不播报（缺终到站）
+
+            var nowUtc = DateTime.UtcNow;
+            // 本次刷新见到的原始车号集合，用于清理失效的追踪状态
+            var seenNames = new HashSet<string>();
+
+            foreach (var t in _trains)
+            {
+                if (string.IsNullOrEmpty(t.Name) || t.Name == "?") continue;
+                seenNames.Add(t.Name);
+
+                _prevStates.TryGetValue(t.Name, out var prev);
+                bool hadPrev = _prevStates.ContainsKey(t.Name);
+
+                bool curStationStop = !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
+                var cur = new TrainPrevState
+                {
+                    OnBoard = t.OnBoard,
+                    Speed = t.Speed,
+                    WasStationStop = curStationStop
+                };
+
+                // 仅在已有上一帧状态时判断状态变化（避免启动时全员播报）
+                if (hadPrev)
+                {
+                    // 拆分合并车号：播报用第一段车号
+                    string announceCode = TrySplitMergedTrainNumber(t.Name, out var p1, out _) ? p1 : t.Name;
+
+                    // 1. 入图：OnBoard false→true
+                    if (!prev.OnBoard && t.OnBoard)
+                    {
+                        if (ShouldAnnounce(announceCode, "arriving", nowUtc))
+                        {
+                            string dest = LookupDestination(announceCode);
+                            _voice.Enqueue(VoiceEngine.AnnouncementType.Arriving, announceCode, dest, "", 0, 0);
+                            Console.WriteLine($"[Voice] 入图: {announceCode} 开往{dest}");
+                        }
+                    }
+                    // 2. 停站：速度 >0→0 且为到站停车
+                    else if (prev.Speed > 0 && t.Speed == 0 && curStationStop)
+                    {
+                        if (ShouldAnnounce(announceCode, "stopped", nowUtc))
+                        {
+                            string dest = LookupDestination(announceCode);
+                            string station = StripEnglishPrefix(t.NextStation);
+                            int platform = t.Platform;
+                            _voice.Enqueue(VoiceEngine.AnnouncementType.StoppedAtStation, announceCode, dest, station, platform, 0);
+                            Console.WriteLine($"[Voice] 停站: {announceCode} @ {station}{platform}台 开往{dest}");
+                        }
+                    }
+                    // 3. 发车：速度 0→>0 且此前为停站
+                    else if (prev.Speed == 0 && t.Speed > 0 && prev.WasStationStop)
+                    {
+                        if (ShouldAnnounce(announceCode, "departed", nowUtc))
+                        {
+                            string dest = LookupDestination(announceCode);
+                            int delayMin = t.Delay > 0 ? (int)Math.Round(t.Delay / 60.0) : 0;
+                            _voice.Enqueue(VoiceEngine.AnnouncementType.Departed, announceCode, dest, "", 0, delayMin);
+                            Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest} 晚点{delayMin}分");
+                        }
+                    }
+                }
+
+                _prevStates[t.Name] = cur;
+            }
+
+            // 清理失效追踪状态（列车已完成/消失），下次该车号再出现时按新车处理
+            if (_prevStates.Count > seenNames.Count)
+            {
+                var stale = _prevStates.Keys.Where(k => !seenNames.Contains(k)).ToList();
+                foreach (var k in stale) _prevStates.Remove(k);
+            }
+        }
+
+        /// <summary>
+        /// 查询车次终到站名（已去英文前缀）。查不到返回 null。
+        /// </summary>
+        private string LookupDestination(string trainCode)
+        {
+            if (string.IsNullOrEmpty(trainCode)) return null;
+            if (_trainInfo.TryLookup(trainCode, out var info) && !string.IsNullOrEmpty(info.Destination))
+                return StripEnglishPrefix(info.Destination);
+            return null;
+        }
+
+        /// <summary>防重复：同车号+同类型在冷却时间内返回 false</summary>
+        private bool ShouldAnnounce(string trainCode, string type, DateTime nowUtc)
+        {
+            string key = $"{trainCode}|{type}";
+            if (_lastAnnounce.TryGetValue(key, out var last))
+            {
+                if ((nowUtc - last).TotalSeconds < AnnounceCooldownSec) return false;
+            }
+            _lastAnnounce[key] = nowUtc;
             return true;
         }
 
@@ -700,12 +861,21 @@ namespace RailRouteAssistantDesktop
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _timer.Stop();
+            _voice?.Dispose();
             _http.Dispose();
             base.OnFormClosing(e);
         }
     }
 
     public class AlertData { public string Level; public string TrainName; public string Message; }
+
+    /// <summary>语音播报用的列车上一帧状态（用于检测状态变化）</summary>
+    public struct TrainPrevState
+    {
+        public bool OnBoard;
+        public int Speed;
+        public bool WasStationStop;  // 上一帧是否为到站停车（用于判断发车）
+    }
 
     public class TrainData
     {
