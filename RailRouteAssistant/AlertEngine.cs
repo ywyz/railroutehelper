@@ -284,9 +284,14 @@ namespace RailRouteAssistant
         }
 
         /// <summary>
-        /// 站台冲突检测：两列车前往同一站同一站台
-        /// 仅限下一站；若一辆已出站（下一站已变）则不会匹配
-        /// 注意：线路两端/出入图方向的站（站名含"方向"）不报，只有中间停车站才报
+        /// 站台冲突检测：两列车前往同一站同一站台。
+        /// 关键：判断到达/占用时间是否重叠，不重叠则不报（时间错开即不冲突）。
+        /// 仅限下一站；若一辆已出站（下一站已变）则不会匹配。
+        /// 注意：线路两端/出入图方向的站（站名含"方向"）不报，只有中间停车站才报。
+        /// 时间窗（均相对当前游戏时间，单位秒）：
+        ///   停站车占用至 now + NextPrepareSec（发车时刻）
+        ///   接近车到达于 now + NextArrivalSec（到达时刻）
+        ///   冲突 ⟺ 接近车到达早于停站车发车
         /// </summary>
         private static List<AlertInfo> DetectPlatformConflicts(List<TrainSnapshot> trains)
         {
@@ -309,25 +314,42 @@ namespace RailRouteAssistant
                     // 方向站（线路两端/出入图方向，站名含"方向"）不报站台冲突
                     if (a.NextStationName.Contains("方向")) continue;
 
-                    // 一辆在站内停车（speed=0），另一辆正在运行（speed>0）-> 紧急
-                    bool aStopped = a.CurrentSpeed == 0;
-                    bool bStopped = b.CurrentSpeed == 0;
-                    bool aRunning = a.CurrentSpeed > 0;
-                    bool bRunning = b.CurrentSpeed > 0;
+                    bool aStoppedAtStation = IsStationStop(a);
+                    bool bStoppedAtStation = IsStationStop(b);
+                    bool aRunning = a.IsOnBoard && a.CurrentSpeed > 0 && !aStoppedAtStation;
+                    bool bRunning = b.IsOnBoard && b.CurrentSpeed > 0 && !bStoppedAtStation;
 
-                    if ((aStopped && bRunning) || (bStopped && aRunning))
+                    // 一列停在站内，一列接近：用时间窗判断是否真的冲突
+                    if (aStoppedAtStation && bRunning)
                     {
-                        alerts.Add(new AlertInfo
+                        if (HasTimeOverlap(stopped: a, approaching: b, out var msg))
                         {
-                            Level = "critical",
-                            TrainName = $"{a.TrainName}/{b.TrainName}",
-                            Message = $"站台冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台，一列在站一列接近",
-                            TimestampMs = NowMs()
-                        });
+                            alerts.Add(new AlertInfo
+                            {
+                                Level = "critical",
+                                TrainName = $"{a.TrainName}/{b.TrainName}",
+                                Message = $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
+                                TimestampMs = NowMs()
+                            });
+                        }
+                        // 时间不重叠（接近车在停站车发车后才到达）→ 不报
+                    }
+                    else if (bStoppedAtStation && aRunning)
+                    {
+                        if (HasTimeOverlap(stopped: b, approaching: a, out var msg))
+                        {
+                            alerts.Add(new AlertInfo
+                            {
+                                Level = "critical",
+                                TrainName = $"{a.TrainName}/{b.TrainName}",
+                                Message = $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
+                                TimestampMs = NowMs()
+                            });
+                        }
                     }
                     else if (aRunning && bRunning)
                     {
-                        // 两列都在运行中前往同一站台 -> 警告
+                        // 两列都在运行中前往同一站台：无法精确判断（停车时长未知），保守报警告
                         alerts.Add(new AlertInfo
                         {
                             Level = "warning",
@@ -336,11 +358,55 @@ namespace RailRouteAssistant
                             TimestampMs = NowMs()
                         });
                     }
-                    // 两列都停车在站 -> 已到达，不报
+                    else if (aStoppedAtStation && bStoppedAtStation)
+                    {
+                        // 两列都已停在同一个站台：真实冲突（同一站台两列车）
+                        alerts.Add(new AlertInfo
+                        {
+                            Level = "critical",
+                            TrainName = $"{a.TrainName}/{b.TrainName}",
+                            Message = $"站台冲突：两列车同时在 {a.NextStationName} {a.NextPlatformNumber}台",
+                            TimestampMs = NowMs()
+                        });
+                    }
                 }
             }
 
             return alerts;
+        }
+
+        /// <summary>
+        /// 判断停站车与接近车的时间窗是否重叠。
+        /// 停站车占用 [已停, 发车]；接近车占用 [到达, 到达+预估停站]。
+        /// 简化判定：接近车到达时刻早于停站车发车时刻 → 重叠（冲突）。
+        /// 返回 false 表示时间错开，不冲突。msg 输出冲突描述。
+        /// </summary>
+        private static bool HasTimeOverlap(TrainSnapshot stopped, TrainSnapshot approaching, out string msg)
+        {
+            msg = "";
+            // 停站车发车剩余秒数：null/0 表示即将发车
+            double departIn = stopped.NextPrepareTimeTotalSeconds ?? 0;
+            // 接近车到达剩余秒数
+            double arriveIn = approaching.NextArrivalTimeTotalSeconds ?? 0;
+
+            // 接近车到达晚于停站车发车 → 时间错开，不冲突
+            // 留 10 秒余量：停站车发车后需驶离站台，接近车到达前站台应已腾空
+            const double ClearMargin = 10.0;
+            if (arriveIn >= departIn + ClearMargin)
+            {
+                return false;  // 不冲突
+            }
+            // 否则冲突，生成描述
+            string depStr = departIn > 0 ? $"{(int)departIn}秒后发车" : "即将发车";
+            string arrStr = arriveIn > 0 ? $"{(int)arriveIn}秒后到达" : "即将到达";
+            msg = $"停站车{stopped.TrainName}{depStr}，接近车{approaching.TrainName}{arrStr}";
+            return true;
+        }
+
+        private static bool IsStationStop(TrainSnapshot s)
+        {
+            return s.IsOnBoard && s.CurrentSpeed == 0 &&
+                   !string.IsNullOrEmpty(s.StopReasons) && s.StopReasons.Contains("Station");
         }
 
         /// <summary>
