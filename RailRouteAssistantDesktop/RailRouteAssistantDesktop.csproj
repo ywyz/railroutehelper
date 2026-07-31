@@ -22,4 +22,11 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="data\train_routes_offline.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

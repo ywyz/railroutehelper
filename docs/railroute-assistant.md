@@ -37,11 +37,11 @@ Rail Route 游戏 (Unity 进程)
 |---|---|---|
 | 1 | 12306 按车号查询 | 请求 `https://search.12306.cn/search/v1/train/search?keyword={车次}&date={yyyyMMdd}`，在响应 `data[]` 中不区分大小写地精确匹配 `station_train_code`，直接读取 `from_station` / `to_station`。 |
 | 2 | 本机在线缓存 | 同一运行图日期内的成功查询保存在 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_online_cache.json`，下次启动可立即使用。 |
-| 3 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json`；发布包如附带 `data\train_routes_offline.json`，也会先被读取。 |
+| 3 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取随桌面程序发布的 `data\train_routes_offline.json`；如用户后来刷新本机表，`%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json` 会覆盖发布表。 |
 
 12306 的查询结果可能同时含有 `Z51`、`Z510` 等前缀相同的车次，因此绝不能取数组第一项。网络请求最长 5 秒、最多同时 3 个；同一失败车次会退避 10 分钟，不会因桌面端每秒刷新而反复请求。成功结果按“车次 + 当前运行图日期”缓存，且覆盖同车号的离线结果。
 
-路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。项目提供了本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。
+路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。经授权，本发布包随附由该数据生成的规范化离线表；原始 APK 不会被包含。项目也提供本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。
 
 在用户自己的电脑上运行以下命令即可刷新降级表：
 
@@ -57,7 +57,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 %LOCALAPPDATA%\RailRouteAssistant\train_routes_offline_report.json
 ```
 
-导出器会校验三个索引的条数、二进制边界和路线表是否完全读完，并为斜杠复车号建立别名。找不到路线的车次、或同一车号对应不同始发终到的冲突项会写入报告并跳过，绝不以任意一条覆盖另一条。原始 APK 和导出的原始时刻数据不应提交到本仓库或未经许可分发。
+导出器会校验三个索引的条数、二进制边界和路线表是否完全读完，并为斜杠复车号建立别名。找不到路线的车次、或同一车号对应不同始发终到的冲突项会写入报告并跳过，绝不以任意一条覆盖另一条。原始 APK 和本机导出报告不包含在发布包中。
 
 ```json
 {
