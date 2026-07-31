@@ -177,8 +177,12 @@ namespace RailRouteAssistant
             if (snap.CanDepart && snap.CurrentSpeed == 0 && !snap.FinishedSchedule)
             {
                 var msg = "即将发车";
-                if (snap.DelaySeconds > 0)
-                    msg += $"（延误{FormatDelay(snap.DelaySeconds)}）";
+                // Train.Delay 会跨站累积；本站提示必须按本站计划发车时刻与游戏时钟计算。
+                if (snap.CurrentDepartureScheduleDelaySeconds.HasValue &&
+                    snap.CurrentDepartureScheduleDelaySeconds.Value > 60.0)
+                {
+                    msg += $"（延误{FormatDelay(snap.CurrentDepartureScheduleDelaySeconds.Value)}）";
+                }
                 msg += nextStation;
                 alerts.Add(new AlertInfo
                 {

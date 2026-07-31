@@ -390,11 +390,13 @@ namespace RailRouteAssistantDesktop
                             LastVisitNonStop = t.TryGetProperty("lastVisitNonStop", out var lvns) && lvns.ValueKind is JsonValueKind.True or JsonValueKind.False && lvns.GetBoolean(),
                             LastVisitStopMinutes = t.TryGetProperty("lastVisitStopMinutes", out var lvsm) && lvsm.ValueKind == JsonValueKind.Number ? lvsm.GetInt32() : 0,
                             LastVisitDeparted = t.TryGetProperty("lastVisitDeparted", out var lvd) && lvd.ValueKind is JsonValueKind.True or JsonValueKind.False && lvd.GetBoolean(),
+                            LastDepartureScheduleDelaySec = t.TryGetProperty("lastDepartureScheduleDelaySec", out var lds) && lds.ValueKind == JsonValueKind.Number ? lds.GetDouble() : null,
                             RequiresDirectionChange = t.TryGetProperty("requiresDirectionChange", out var rdc) && rdc.ValueKind is JsonValueKind.True or JsonValueKind.False && rdc.GetBoolean(),
                             CurrentStation = t.TryGetProperty("currentStation", out var cs) && cs.ValueKind == JsonValueKind.String ? cs.GetString() ?? "" : "",
                             CurrentPlatform = t.TryGetProperty("currentPlatform", out var cp) && cp.ValueKind == JsonValueKind.Number ? cp.GetInt32() : 0,
                             CurrentStopMinutes = t.TryGetProperty("currentStopMinutes", out var csm) && csm.ValueKind == JsonValueKind.Number ? csm.GetInt32() : 0,
                             DepartureRemainingSec = t.TryGetProperty("departureRemainingSec", out var drs) && drs.ValueKind == JsonValueKind.Number ? drs.GetDouble() : null,
+                            CurrentDepartureScheduleDelaySec = t.TryGetProperty("currentDepartureScheduleDelaySec", out var cds) && cds.ValueKind == JsonValueKind.Number ? cds.GetDouble() : null,
                             StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
                             NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
                             NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
@@ -760,8 +762,9 @@ namespace RailRouteAssistantDesktop
                             Destination = dest,
                             NextStation = hasNextMapStop ? StripEnglishPrefix(t.NextStation) : "",
                             NextPlatform = hasNextMapStop ? t.Platform : 0,
-                            // 延误不超过 60 秒按正点；超过后向上取整为播报分钟数。
-                            DelayMinutes = GetDepartureDelayMinutes(t.Delay)
+                            // 只使用插件按“本站计划发车时刻 - 游戏时钟”固定的结果。
+                            // Train.Delay 会跨站累积，不能代表本次实际发车是否晚点。
+                            DelayMinutes = GetDepartureDelayMinutes(t.LastDepartureScheduleDelaySec)
                         });
                         Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest}" +
                             (hasNextMapStop ? $" -> {t.NextStation}{t.Platform}道" : "（出图/无下一停站）"));
@@ -795,11 +798,15 @@ namespace RailRouteAssistantDesktop
                 !station.Contains("方向", StringComparison.Ordinal);
         }
 
-        /// <summary>发车播报采用的延误分钟数；不超过一分钟按正点处理。</summary>
-        private static int GetDepartureDelayMinutes(double delaySeconds)
+        /// <summary>
+        /// 发车播报采用本站计划时刻相对游戏时钟的实际晚点分钟数；不超过一分钟按正点处理。
+        /// 计划绝对时刻不可用时返回 null，避免把累计 Train.Delay 误报为本次晚点。
+        /// </summary>
+        private static int? GetDepartureDelayMinutes(double? delaySeconds)
         {
-            return delaySeconds > 60.0
-                ? Math.Max(1, (int)Math.Ceiling(delaySeconds / 60.0))
+            if (!delaySeconds.HasValue) return null;
+            return delaySeconds.Value > 60.0
+                ? Math.Max(1, (int)Math.Ceiling(delaySeconds.Value / 60.0))
                 : 0;
         }
 
@@ -892,9 +899,11 @@ namespace RailRouteAssistantDesktop
                 ActualVisitCount = t.ActualVisitCount, ScheduledVisitCount = t.ScheduledVisitCount, ScheduledVisitIndex = t.ScheduledVisitIndex, LastVisitStation = t.LastVisitStation,
                 LastVisitPlatform = t.LastVisitPlatform, LastVisitNonStop = t.LastVisitNonStop,
                 LastVisitStopMinutes = t.LastVisitStopMinutes, LastVisitDeparted = t.LastVisitDeparted,
+                LastDepartureScheduleDelaySec = t.LastDepartureScheduleDelaySec,
                 RequiresDirectionChange = t.RequiresDirectionChange,
                 CurrentStation = t.CurrentStation, CurrentPlatform = t.CurrentPlatform,
                 CurrentStopMinutes = t.CurrentStopMinutes, DepartureRemainingSec = t.DepartureRemainingSec,
+                CurrentDepartureScheduleDelaySec = t.CurrentDepartureScheduleDelaySec,
                 StopReasons = t.StopReasons,
                 NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince
             };
@@ -937,7 +946,13 @@ namespace RailRouteAssistantDesktop
 
         private void UpdateTrainItem(ListViewItem item, TrainData t)
         {
-            var delayStr = t.Delay > 0 ? $"+{(int)t.Delay}s" : t.Delay < 0 ? $"{(int)t.Delay}s" : "";
+            // 停站时以本站计划发车时刻和游戏时钟为准，避免展示跨站累积的游戏 Delay。
+            // 运行中没有可比的本站发车时刻，继续显示游戏原始值作为运行诊断。
+            var displayDelaySeconds = IsStationStop(t) && t.CurrentDepartureScheduleDelaySec.HasValue
+                ? t.CurrentDepartureScheduleDelaySec.Value
+                : t.Delay;
+            var delayStr = displayDelaySeconds > 0 ? $"+{(int)displayDelaySeconds}s" :
+                displayDelaySeconds < 0 ? $"{(int)displayDelaySeconds}s" : "";
 
             // 状态：停站状态 + 停车时长 + 本站发车倒计时
             var statusParts = new List<string>();
@@ -1093,9 +1108,12 @@ namespace RailRouteAssistantDesktop
         public int ActualVisitCount; public int ScheduledVisitCount; public int ScheduledVisitIndex = -1;
         public string LastVisitStation; public int LastVisitPlatform; public bool LastVisitNonStop;
         public int LastVisitStopMinutes; public bool LastVisitDeparted;
+        // 本次刚发车时按游戏时钟固定的实际晚点秒数；null 表示插件无法取得绝对计划时刻。
+        public double? LastDepartureScheduleDelaySec;
         public bool RequiresDirectionChange;
         public string CurrentStation; public int CurrentPlatform; public int CurrentStopMinutes;
         public double? DepartureRemainingSec;  // 当前停站距发车剩余秒数
+        public double? CurrentDepartureScheduleDelaySec;  // 当前停站相对计划发车时刻的晚点秒数
         public string StopReasons;
         public double? NextPrepareSec;  // 下一交路准备剩余秒数（不用于当前停站倒计时）
         public double? NextArrivalSec;  // 距到达剩余秒数
