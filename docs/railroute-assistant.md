@@ -7,7 +7,8 @@ Rail Route Assistant 是一个 BepInEx 插件 + 桌面程序，用于在 Rail Ro
 ```
 Rail Route 游戏 (Unity 进程)
 ├── BepInEx 插件 (RailRouteAssistant.dll, .NET Framework 4.7.2)
-│   ├── Harmony 补丁 Train.Move  ← 列车移动时触发数据采集（每 1 秒节流）
+│   ├── Harmony 补丁 Train.Move / Semaphore.AfterTrainEntered
+│   │   └── 移动时采集；越过信号时锁定紧邻下一座同向信号
 │   ├── ReflectCache  ← 反射缓存，所有 Type/Property/Field/Method 只查找一次
 │   ├── 告警引擎 AlertEngine  ← 评估告警规则
 │   └── HTTP 服务器 (localhost:8787)  ← 后台线程提供 JSON 数据
@@ -23,46 +24,94 @@ Rail Route 游戏 (Unity 进程)
 
 - 列车基本信息：车号、速度、目标速度、延误、最大速度
 - 运行状态：是否在线、是否可发车、是否已完成、是否故障
-- 信号状态：前方信号机状态（开放/关闭/等待/无信号）
+- 信号状态：紧邻下一座同向运营信号的状态（开放/未开放/占用/调车/未知）
 - 信号机详情：AllocationState、Type（Manual/Auto/Shunting）、IsPendingRoute
-- 前方轨道：Front Connection 的 AllocationState
 - 停车信息：停车原因、停车时长
 - 下一站信息：站名 + 站台号
 
+### 车次始发、终到查询
+
+旧版使用的 `train_list.js` 是一次性的静态全量表，已经不能覆盖当前运行图；桌面端不再在启动时下载该表。现在只对当前地图中实际出现的车号发起查询，数据优先级如下：
+
+| 优先级 | 数据源 | 行为 |
+|---|---|---|
+| 1 | 12306 按车号查询 | 请求 `https://search.12306.cn/search/v1/train/search?keyword={车次}&date={yyyyMMdd}`，在响应 `data[]` 中不区分大小写地精确匹配 `station_train_code`，直接读取 `from_station` / `to_station`。 |
+| 2 | 本机在线缓存 | 同一运行图日期内的成功查询保存在 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_online_cache.json`，下次启动可立即使用。 |
+| 3 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取随桌面程序发布的 `data\train_routes_offline.json`；如用户后来刷新本机表，`%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json` 会覆盖发布表。 |
+
+12306 的查询结果可能同时含有 `Z51`、`Z510` 等前缀相同的车次，因此绝不能取数组第一项。网络请求最长 5 秒、最多同时 3 个；同一失败车次会退避 10 分钟，不会因桌面端每秒刷新而反复请求。成功结果按“车次 + 当前运行图日期”缓存，且覆盖同车号的离线结果。
+
+路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。经授权，本发布包随附由该数据生成的规范化离线表；原始 APK 不会被包含。项目也提供本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。
+
+在用户自己的电脑上运行以下命令即可刷新降级表：
+
+```powershell
+dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.csproj -- `
+  --apk "C:\Users\yw980\Downloads\lulutong.apk"
+```
+
+默认会生成：
+
+```text
+%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json
+%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline_report.json
+```
+
+导出器会校验三个索引的条数、二进制边界和路线表是否完全读完，并为斜杠复车号建立别名。找不到路线的车次、或同一车号对应不同始发终到的冲突项会写入报告并跳过，绝不以任意一条覆盖另一条。原始 APK 和本机导出报告不包含在发布包中。
+
+```json
+{
+  "schemaVersion": 1,
+  "source": "lulutong-local-export",
+  "generatedAtUtc": "2026-07-30T00:00:00Z",
+  "routes": {
+    "Z51": { "origin": "北京丰台", "destination": "启东" }
+  }
+}
+```
+
 ### 信号状态
 
-插件从多个维度判断信号状态：
+列车越过一座信号机时，插件在游戏线程调用该信号的
+`PathToNextSemaphore(true)`，按列车 UUID 记录沿当前道岔路径的**紧邻下一座
+同向运营信号**。后续快照持续读取同一信号的实际状态，因此玩家随后开通进路时，
+告警会立即消失。
 
-1. **信号机 AllocationState**：`Free(0)` = 信号未开放，`Allocated(1)` = 信号已开放
-2. **前方轨道 AllocationState**（信号机 Front Connection）：`Free(0)` = 前方轨道未配进路
-3. **列车 TargetSpeed**：`≈0` = 列车已进入制动距离开始减速
+| AllocationState | 含义 | 告警行为 |
+|---|---|---|
+| `1` Allocated | 已开通 | 不告警 |
+| `0` Free | 未开放 | 提前预警 |
+| `2` Occupied | 前方区间占用 | 提前预警 |
+| `3` Shunting | 调车状态 | 提前预警 |
+| `-1` / 无信号 | 未知或线路边缘 | 不猜测、不报“关闭” |
 
-> 注意：`FrontAllocationState == Occupied(2)` 不作为信号关闭的依据，因为列车自己可能就在这段轨道上。
+`Train.ActingSignalAhead` 会跳过已开通的信号并指向更远处的首个阻挡点，不能
+表示“下一座物理信号”；告警不再使用它。`Semaphore.Front` 实际是信号接近侧
+连接，也不再作为信号后方进路的依据。`TargetSpeed` 仅用于标注已确认阻挡后的
+制动程度，不单独产生“信号关闭”告警。
 
 ### 告警规则（当前实现）
 
-告警核心逻辑：**降速即告警，直接提示停车**。不依赖 `SignalAllocationState`（可能读取失败），统一用 `TargetSpeed` 判断信号关闭。正常进站减速（`StopReasons` 含 `Station`）不告警。
+告警核心逻辑：**越过当前信号后立即检查紧邻下一信号**。只有该信号明确不能
+通行时才告警；普通限速、进站减速或信号状态未知都不会被写成“前方信号关闭”。
 
 #### 运行中列车
 
 | 场景 | 级别 | 触发条件 |
 |------|------|----------|
-| 信号关闭但列车尚未减速 | 警告 | 信号机 `AllocationState=Free` 或前方轨道 `Free`，且 `TargetSpeed` 仍正常（仅当 AllocationState 可读时生效） |
-| 前方信号关闭 即将停车 | 警告 | `trainSlowing`（TargetSpeed 下降但仍>0）且非到站停车 |
-| 前方进路未配置 即将停车 | 紧急 | `trainBraking`（TargetSpeed≈0）且 `LookaheadCount=0` 且 非到站停车 |
-| 前方信号关闭 即将停车 | 紧急 | `trainBraking`（TargetSpeed≈0）且 `LookaheadCount>0` 且 非到站停车 |
+| 下一信号未开放/占用/调车 | 警告 | 越过当前信号后监视到的下一座信号 `AllocationState != 1`，且非正常进站 |
+| 下一信号阻挡，列车正在制动 | 紧急 | 上述真实阻挡存在，且 `TargetSpeed≈0` |
 | 即将进站停车 | 信息 | 减速中 且 `StopReasons` 含 `Station` |
 
 #### 已停车列车
 
-> 信号关闭判断统一使用 `TargetSpeed <= 0.5`，与桌面程序显示逻辑一致；到站停车（`StopReasons` 含 `Station`）不在此告警。
+> 到站停车（`StopReasons` 含 `Station`）是正常状态。只有发车条件已满足但紧邻
+> 下一信号实际不能通行时，才会给出信号/进路紧急告警。
 
 | 场景 | 级别 | 触发条件 |
 |------|------|----------|
-| 可发车但无进路 | 紧急 | `CanDepart=true` 且 `LookaheadCount=0` |
-| 可发车但信号关闭 | 紧急 | `CanDepart=true` 且 `TargetSpeed<=0.5` 且 非到站停车 |
-| 信号关闭导致停车 | 紧急 | `CanDepart=false` 且 非到站停车 且 `LookaheadCount>0` |
-| 前方进路未配置 | 紧急 | `CanDepart=false` 且 非到站停车 且 `LookaheadCount=0` |
+| 可发车但下一信号不能通行 | 紧急 | `CanDepart=true` 且下一信号 `AllocationState != 1` |
+| 信号/区间阻挡导致停车 | 紧急 | 非到站停车且下一信号 `AllocationState != 1` |
 | 线路停车超时 | 警告 | 非到站停车超过 10 秒 |
 
 #### 其他告警
@@ -76,7 +125,7 @@ Rail Route 游戏 (Unity 进程)
 | 进路相交 | 紧急 | 两列车前方进路经过同一段轨道 |
 | 列车故障 | 紧急 | `IsBrokenDown=true` |
 
-> **站台冲突的时间重叠判定**：仅当一列已停在站台、另一列正在接近同一站台时才精确判定。停站车占用站台至发车时刻（`NextPrepareSec`），接近车到达于 `NextArrivalSec`。若接近车到达晚于停站车发车 + 10 秒清空余量，则时间错开，不报冲突；否则报紧急冲突。两列都在运行或都已停站时分别按"可能冲突"和"真实冲突"处理。
+> **站台冲突的时间重叠判定**：仅当一列已停在站台、另一列正在接近同一站台时才精确判定。停站车占用站台至本次访问的计划发车时刻（`departureRemainingSec`），接近车到达于 `NextArrivalSec`。若接近车到达晚于停站车发车 + 10 秒清空余量，则时间错开，不报冲突；否则报紧急冲突。两列都在运行或都已停站时分别按“可能冲突”和“真实冲突”处理。
 
 ### 语音播报
 
@@ -86,13 +135,16 @@ Rail Route 游戏 (Unity 进程)
 
 | 类型 | 触发条件 | 播报内容 |
 |------|----------|----------|
-| 列车接近 | 列车首次进入地图（OnBoard 由 false→true） | 开往xxx方向的列车 车号 接近，请做好接车准备 |
-| 列车停站 | 速度由 >0→0 且停车原因含 Station | 列车停靠在 站名 x站台，开往xxx方向 |
-| 列车发车 | 速度由 0→>0 且此前为停站 | 开往xxx方向的列车 车号 正点/晚点x分发车 |
+| 列车接近 | `Waiting` 由 false→true（等待入图） | 开往xxx方向的列车 车号 接近。 |
+| 列车停站 | 实际访问次数增加且本次不是通过站 | 开往xxx方向的列车 车号 已经停靠xx站台，本次停车x分。 |
+| 列车通过 | 实际访问次数增加、本次为通过站，且本站位于地图中间 | 开往xxx方向的列车 车号 通过xx站x道，下一站xx站x道。 |
+| 发车前预告 | 中间停站的 `departureRemainingSec` 首次进入 60 秒以内 | xx站xx道 车号列车 即将发车，请做好准备。 |
+| 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。 |
 
 - **终到站**：由车次库（12306 数据）查询拆分后的车号得到，查不到时省略"开往xxx方向"段
-- **防重复**：同一车号 + 同一播报类型，30 秒内不重复触发
+- **防重复**：同一车号 + 同一播报类型，30 秒内不重复触发；发车前预告对同一次实际访问只播报一次
 - **合并车号**：状态追踪用原始车号（避免 G4545/G4546 双重播报），播报时用拆分后的第一段车号
+- **首站与末站**：由游戏 `ScheduledVisits` 的首尾索引精确识别；两站均不播报“通过”，也不播报发车前一分钟预告。
 
 **音频素材**：预录音频片段位于 `RailRouteAssistantDesktop/assets/audio/`，编译时自动复制到输出目录。素材来源：[gaotieguangboyinyuan](https://github.com/wangyetuoguan/gaotieguangboyinyuan)。
 
@@ -107,8 +159,10 @@ Rail Route 游戏 (Unity 进程)
 **TTS 兜底**：以下内容无预录音频，使用 Windows 内置 `SpeechSynthesizer`（中文女声 Microsoft Huihui）合成：
 
 - 字母 `C/T/X`（读「城/特/行」，音频库缺这几个字母）
-- 句式词 `开往` `方向` `方向的列车` `接近，请做好接车准备` `正点发车` `晚点` `分发车`
+- 句式词 `开往` `方向` `方向的列车` `接近` `即将发车，请做好准备` `正点发车` `晚点` `分发车`
 - 所有站名（无法预录全量站名）
+
+**播报速度**：TTS 合成的句式、站名和缺失字母通过 SSML 设为正常速度的 **1.2 倍**（`+20%`）。数字读音及首尾提示音继续使用原始预录素材，以避免简单变速造成音调变化或失真。
 
 > 若系统无中文 TTS 语音，TTS 部分会静默跳过，预录音频仍正常播放。
 
@@ -248,7 +302,7 @@ Rail Route 游戏 (Unity 进程)
       "hasSignal": true,
       "signalState": "Node:Semaphore:320:287",
       "signalAllocationState": 0,
-      "frontAllocationState": 0,
+      "frontAllocationState": -1,
       "routeTotal": 5,
       "routeCur": 1,
       "routeRemain": 3,
@@ -342,8 +396,8 @@ Game.Context.Ctx.Deps                       // static，返回 Game.Context.ICon
 
 - **信号区间** = 两个信号灯（传感器）之间的路
 - **信号机 AllocationState=Free** = 信号未开放（无进路通过）
-- **前方轨道 AllocationState=Free** = 前方轨道未配进路
-- **TargetSpeed ≈ 0** = 列车已进入制动距离，开始减速
+- **紧邻下一信号 AllocationState!=Allocated** = 下一信号不能通行
+- **TargetSpeed ≈ 0** = 列车已进入制动距离；仅与真实信号阻挡组合后升级告警
 - **NeedsRouteAhead** = 列车前方有 Auto 类型信号机但没有 pending route
 - **LookaheadCount** = 前方铁轨段数（仅用于判断完全无进路的情况）
 - **PlatformNumber** = 站台号（如 3台）
@@ -352,8 +406,8 @@ Game.Context.Ctx.Deps                       // static，返回 Game.Context.ICon
 
 本项目中的进路全部为**手动配置**，不涉及自动进路。告警系统帮助玩家判断：
 - 信号是否开放（列车能否继续通行）
-- 前方轨道段是否已配置进路（通过 `AllocationState` 提前预警）
-- 何时需要提前配置下一个信号区间
+- 刚越过一个信号后，紧邻下一信号是否已开通
+- 何时需要提前配置下一信号区间
 - 哪些列车因信号关闭而停车
 
 > **关于进路冲突**：两列列车前往同一站不一定是冲突——追踪运行（前后列车沿同一进路依次通过）属于正常的进路复用，不是冲突。真正的冲突是不同进路汇聚到同一段轨道，当前通过 `ResolvedStep.Destination` Connection 的 `Name` 进行交集检测。
@@ -372,10 +426,12 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── Program.cs                 # 入口
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
-├── TrainInfoService.cs        # 车次库（12306 数据），查询车次始发终到
+├── TrainInfoService.cs        # 12306 在线优先 + 本机离线降级的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
 ├── assets/audio/              # 预录音频素材（69 个文件）
 └── RailRouteAssistantDesktop.csproj
+
+tools/ExportLulutongTrainRoutes/ # 从用户本机 APK 导出离线车次降级表
 ```
 
 ## 免责声明

@@ -17,7 +17,7 @@ namespace RailRouteAssistant
     {
         public const string PluginGuid = "com.railroute.assistant";
         public const string PluginName = "Rail Route Assistant";
-        public const string PluginVersion = "2.1.0";
+        public const string PluginVersion = "2.2.0";
 
         internal static ManualLogSource Log;
 
@@ -59,6 +59,23 @@ namespace RailRouteAssistant
             else
             {
                 Log.LogWarning("未找到 Game.Train.Train 类型");
+            }
+
+            // 精确捕获列车越过信号机的时刻：用于监视紧邻的下一座同向信号，
+            // 而不是跳过多个已开放信号后才得到的远方阻挡信号。
+            var semaphoreType = AccessTools.TypeByName("Game.Railroad.Semaphore");
+            var afterTrainEntered = semaphoreType != null
+                ? AccessTools.Method(semaphoreType, "AfterTrainEntered")
+                : null;
+            if (afterTrainEntered != null)
+            {
+                _harmony.Patch(afterTrainEntered,
+                    postfix: new HarmonyMethod(typeof(TrainPatch), nameof(TrainPatch.SemaphoreAfterTrainEntered_Postfix)));
+                Log.LogInfo("已 Hook Semaphore.AfterTrainEntered");
+            }
+            else
+            {
+                Log.LogWarning("未找到 Semaphore.AfterTrainEntered 方法");
             }
 
             // 启动 HTTP 服务器（后台线程）
