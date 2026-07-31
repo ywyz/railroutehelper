@@ -54,7 +54,11 @@ namespace RailRouteAssistant
         public int LastVisitStopDurationMinutes;
         public bool LastVisitDeparted;
         public bool RequiresDirectionChange;  // 游戏标记：本次到站后需调向
+        internal double? LastVisitArrivalGameTime;
         internal double? LastVisitDepartureGameTime;
+        // 最近一次实际到站的正晚点秒数：实际到达游戏时钟 - StationVisit.From。
+        // 负数表示早点、正数表示晚点，首次观察到该次访问时固定。
+        public double? LastArrivalScheduleDeviationSeconds;
         // 最近一次实际停站的发车晚点秒数：以该次 StationVisit.To 与游戏时钟计算，
         // 且在检测到 Departed 时固定，绝不使用会跨站累积的 Train.Delay。
         public double? LastDepartureScheduleDelaySeconds;

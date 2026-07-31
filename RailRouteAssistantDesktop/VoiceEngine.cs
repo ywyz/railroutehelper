@@ -70,7 +70,7 @@ namespace RailRouteAssistantDesktop
             public int StopMinutes;
             /// <summary>本次停站后游戏要求列车调向。</summary>
             public bool RequiresDirectionChange;
-            /// <summary>正数表示晚点分钟；零按正点播报；null 表示无法可靠判断。</summary>
+            /// <summary>正数表示晚点、负数表示早点；零按正点播报；null 表示无法可靠判断。</summary>
             public int? DelayMinutes;
         }
 
@@ -100,16 +100,31 @@ namespace RailRouteAssistantDesktop
                     break;
 
                 case AnnouncementType.StoppedAtStation:
-                    // 开往 xx 方向的列车 车号 已经停靠 xx x站台，本次停车 x 分。
+                    // 开往 xx 方向的列车 车号 早点/正点/晚点 x 分到达 xx x道，本次停车 x 分。
                     AddDirectionPrefix(segs, dest);
                     AddTrainNumber(segs, announcement.TrainCode);
-                    AddTts(segs, "已经停靠");
-                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "站台");
+                    if (!announcement.DelayMinutes.HasValue)
+                    {
+                        AddTts(segs, "到达");
+                    }
+                    else if (announcement.DelayMinutes.Value < 0)
+                    {
+                        AddTts(segs, "早点" + FormatChineseCardinal(Math.Abs(announcement.DelayMinutes.Value)) + "分到达");
+                    }
+                    else if (announcement.DelayMinutes.Value > 0)
+                    {
+                        AddTts(segs, "晚点" + FormatChineseCardinal(announcement.DelayMinutes.Value) + "分到达");
+                    }
+                    else
+                    {
+                        AddTts(segs, "正点到达");
+                    }
+                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "道");
                     if (announcement.StopMinutes > 0)
                     {
                         AddTts(segs, "，本次停车");
-                        AddNumber(segs, announcement.StopMinutes);
-                        AddTts(segs, "分。");
+                        AddMinuteCount(segs, announcement.StopMinutes);
+                        AddTts(segs, "。");
                     }
                     else
                     {
@@ -140,8 +155,8 @@ namespace RailRouteAssistantDesktop
                     else if (announcement.DelayMinutes.Value > 0)
                     {
                         AddTts(segs, "晚点");
-                        AddNumber(segs, announcement.DelayMinutes.Value);
-                        AddTts(segs, "分发车");
+                        AddMinuteCount(segs, announcement.DelayMinutes.Value);
+                        AddTts(segs, "发车");
                     }
                     else
                     {
@@ -241,6 +256,54 @@ namespace RailRouteAssistantDesktop
         {
             if (n <= 0) return;
             foreach (char c in n.ToString()) AddAudio(segs, c + ".mp3");
+        }
+
+        /// <summary>时间分钟使用中文基数词，避免把 15 分逐位读成“一五分”。</summary>
+        private void AddMinuteCount(List<Segment> segs, int minutes)
+        {
+            if (minutes <= 0) return;
+            AddTts(segs, FormatChineseCardinal(minutes) + "分");
+        }
+
+        /// <summary>
+        /// 将正整数格式化为普通话基数词。1-9999 显式处理十/百/千位；
+        /// 更大的罕见值交给系统中文 TTS 按完整数字解析。
+        /// </summary>
+        internal static string FormatChineseCardinal(int value)
+        {
+            if (value <= 0) return "零";
+            if (value > 9999) return value.ToString();
+
+            string[] digits = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+            string[] units = { "", "十", "百", "千" };
+            var result = new System.Text.StringBuilder();
+            bool started = false;
+            bool pendingZero = false;
+
+            for (int place = 3; place >= 0; place--)
+            {
+                int divisor = (int)Math.Pow(10, place);
+                int digit = value / divisor % 10;
+                if (digit == 0)
+                {
+                    if (started && value % divisor != 0) pendingZero = true;
+                    continue;
+                }
+
+                if (pendingZero)
+                {
+                    result.Append("零");
+                    pendingZero = false;
+                }
+
+                // 10-19 省略开头的“一”，读“十、十一……十九”。
+                if (!(place == 1 && digit == 1 && !started))
+                    result.Append(digits[digit]);
+                result.Append(units[place]);
+                started = true;
+            }
+
+            return result.ToString();
         }
 
         private void AddDigit(List<Segment> segs, int n) => AddNumber(segs, n);

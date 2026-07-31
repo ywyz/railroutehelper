@@ -141,6 +141,7 @@ namespace RailRouteAssistant
                 sb.Append("\"lastVisitNonStop\":").Append(s.LastVisitNonStop.ToString().ToLower()).Append(",");
                 sb.Append("\"lastVisitStopMinutes\":").Append(s.LastVisitStopDurationMinutes).Append(",");
                 sb.Append("\"lastVisitDeparted\":").Append(s.LastVisitDeparted.ToString().ToLower()).Append(",");
+                sb.Append("\"lastArrivalScheduleDeviationSec\":").Append(s.LastArrivalScheduleDeviationSeconds.HasValue ? s.LastArrivalScheduleDeviationSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"lastDepartureScheduleDelaySec\":").Append(s.LastDepartureScheduleDelaySeconds.HasValue ? s.LastDepartureScheduleDelaySeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"requiresDirectionChange\":").Append(s.RequiresDirectionChange.ToString().ToLower()).Append(",");
                 sb.Append("\"currentStation\":").Append(JsonStr(s.CurrentStationName)).Append(",");

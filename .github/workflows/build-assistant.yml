@@ -28,7 +28,7 @@ jobs:
       - name: Download BepInEx
         shell: pwsh
         run: |
-          $url = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.2/BepInEx_win_x64_5.4.23.2.zip"
+          $url = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.5/BepInEx_win_x64_5.4.23.5.zip"
           Invoke-WebRequest -Uri $url -OutFile bepinex.zip -UseBasicParsing
           Expand-Archive -Path bepinex.zip -DestinationPath .bepinex -Force
 
@@ -44,6 +44,25 @@ jobs:
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -o publish/desktop
 
+      - name: Build one-click Windows bundle
+        shell: pwsh
+        run: |
+          $bundle = "publish/bundle"
+          $payload = "$bundle/payload"
+          New-Item -ItemType Directory -Force "$payload/BepInEx/plugins" | Out-Null
+          Copy-Item ".bepinex/BepInEx/core" "$payload/BepInEx/core" -Recurse -Force
+          Copy-Item ".bepinex/.doorstop_version" "$payload/.doorstop_version" -Force
+          Copy-Item ".bepinex/changelog.txt" "$payload/changelog.txt" -Force
+          Copy-Item ".bepinex/doorstop_config.ini" "$payload/doorstop_config.ini" -Force
+          Copy-Item ".bepinex/winhttp.dll" "$payload/winhttp.dll" -Force
+          Copy-Item "RailRouteAssistant/bin/Release/net472/RailRouteAssistant.dll" "$payload/BepInEx/plugins/RailRouteAssistant.dll" -Force
+          Copy-Item "publish/desktop/RailRouteAssistantDesktop.exe" "$bundle/RailRouteAssistantDesktop.exe" -Force
+          Copy-Item "INSTALL-WINDOWS.md" "$bundle/安装说明.md" -Force
+          Copy-Item "LICENSE-BepInEx.txt" "$bundle/LICENSE-BepInEx.txt" -Force
+          Copy-Item "LICENSE-BepInEx.txt" "$payload/LICENSE-BepInEx.txt" -Force
+          Copy-Item "THIRD_PARTY_NOTICES.md" "$bundle/THIRD_PARTY_NOTICES.md" -Force
+          Compress-Archive -Path "$bundle/*" -DestinationPath "publish/RailRouteAssistant-Windows-x64.zip" -Force
+
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
@@ -56,11 +75,18 @@ jobs:
           name: RailRouteAssistantDesktop-exe
           path: publish/desktop/RailRouteAssistantDesktop.exe
 
+      - name: Upload one-click bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: RailRouteAssistant-Windows-x64
+          path: publish/RailRouteAssistant-Windows-x64.zip
+
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            publish/RailRouteAssistant-Windows-x64.zip
             RailRouteAssistant/bin/Release/net472/RailRouteAssistant.dll
             publish/desktop/RailRouteAssistantDesktop.exe
           generate_release_notes: true

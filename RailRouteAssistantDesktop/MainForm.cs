@@ -19,6 +19,7 @@ namespace RailRouteAssistantDesktop
 
         private ListView _alertList;
         private ListView _trainList;
+        private TextBox _trainSearchBox;
         private Label _statusLabel;
         private Label _statsLabel;
 
@@ -121,6 +122,34 @@ namespace RailRouteAssistantDesktop
                 Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold)
             };
 
+            var searchPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 32,
+                BackColor = ColorPanel,
+                Padding = new Padding(8, 4, 8, 4)
+            };
+            var searchLabel = new Label
+            {
+                Dock = DockStyle.Left,
+                Width = 46,
+                Text = "搜索：",
+                ForeColor = Color.LightGray,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Microsoft YaHei UI", 8.5F)
+            };
+            _trainSearchBox = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                PlaceholderText = "输入车次（支持部分匹配）",
+                BackColor = Color.FromArgb(45, 45, 52),
+                ForeColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Microsoft YaHei UI", 9F)
+            };
+            searchPanel.Controls.Add(_trainSearchBox);
+            searchPanel.Controls.Add(searchLabel);
+
             _trainList = new ListView
             {
                 Dock = DockStyle.Fill,
@@ -182,6 +211,7 @@ namespace RailRouteAssistantDesktop
             Controls.Add(_statsLabel);      // Bottom
             Controls.Add(_alertList);       // Top
             Controls.Add(alertHeader);      // Top
+            Controls.Add(searchPanel);      // Top - 列车标题下方
             Controls.Add(trainHeader);      // Top
             Controls.Add(_statusLabel);     // Top - index 最大，最先处理，最顶部
 
@@ -219,6 +249,25 @@ namespace RailRouteAssistantDesktop
                     _lastRightClickedList = _alertList;
                     var hit = _alertList.HitTest(e.Location);
                     if (hit.Item != null) hit.Item.Selected = true;
+                }
+            };
+
+            // 输入即筛选；车次按不区分大小写的部分匹配显示。
+            _trainSearchBox.TextChanged += (s, e) => RefreshTrainList();
+            _trainSearchBox.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter && _trainList.Items.Count > 0)
+                {
+                    _trainList.Items[0].Selected = true;
+                    _trainList.Items[0].Focused = true;
+                    _trainList.Items[0].EnsureVisible();
+                    _trainList.Focus();
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.KeyCode == Keys.Escape)
+                {
+                    _trainSearchBox.Clear();
+                    e.SuppressKeyPress = true;
                 }
             };
 
@@ -264,6 +313,12 @@ namespace RailRouteAssistantDesktop
         private void SelectTrainInList(string trainName)
         {
             if (string.IsNullOrEmpty(trainName)) return;
+            // 当前筛选条件若隐藏了告警对应车次，直接把搜索条件切到该车次。
+            if (_trainSearchBox != null &&
+                trainName.IndexOf(_trainSearchBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                _trainSearchBox.Text = trainName;
+            }
             _trainList.BeginUpdate();
             try
             {
@@ -390,6 +445,7 @@ namespace RailRouteAssistantDesktop
                             LastVisitNonStop = t.TryGetProperty("lastVisitNonStop", out var lvns) && lvns.ValueKind is JsonValueKind.True or JsonValueKind.False && lvns.GetBoolean(),
                             LastVisitStopMinutes = t.TryGetProperty("lastVisitStopMinutes", out var lvsm) && lvsm.ValueKind == JsonValueKind.Number ? lvsm.GetInt32() : 0,
                             LastVisitDeparted = t.TryGetProperty("lastVisitDeparted", out var lvd) && lvd.ValueKind is JsonValueKind.True or JsonValueKind.False && lvd.GetBoolean(),
+                            LastArrivalScheduleDeviationSec = t.TryGetProperty("lastArrivalScheduleDeviationSec", out var las) && las.ValueKind == JsonValueKind.Number ? las.GetDouble() : null,
                             LastDepartureScheduleDelaySec = t.TryGetProperty("lastDepartureScheduleDelaySec", out var lds) && lds.ValueKind == JsonValueKind.Number ? lds.GetDouble() : null,
                             RequiresDirectionChange = t.TryGetProperty("requiresDirectionChange", out var rdc) && rdc.ValueKind is JsonValueKind.True or JsonValueKind.False && rdc.GetBoolean(),
                             CurrentStation = t.TryGetProperty("currentStation", out var cs) && cs.ValueKind == JsonValueKind.String ? cs.GetString() ?? "" : "",
@@ -518,8 +574,17 @@ namespace RailRouteAssistantDesktop
             }
             _alertList.EndUpdate();
 
+            RefreshTrainList();
+        }
+
+        /// <summary>按搜索框筛选并重建列车列表，同时保留仍可见的选中车号。</summary>
+        private void RefreshTrainList()
+        {
+            if (_trainList == null) return;
+
             // 列车列表 - 排序后重建（顺序会变化）；保留选中车号
             _trains.Sort((a, b) => TrainSortPriority(a).CompareTo(TrainSortPriority(b)));
+            string query = _trainSearchBox?.Text.Trim() ?? "";
 
             // 记录当前选中的车号，重建后恢复
             _selectedTrainNames.Clear();
@@ -530,6 +595,10 @@ namespace RailRouteAssistantDesktop
             _trainList.Items.Clear();
             foreach (var t in _trains)
             {
+                if (!string.IsNullOrEmpty(query) &&
+                    t.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
                 var item = CreateTrainItem(t);
                 if (_selectedTrainNames.Contains(t.Name))
                 {
@@ -706,7 +775,8 @@ namespace RailRouteAssistantDesktop
                                 Station = StripEnglishPrefix(station),
                                 Platform = platform,
                                 StopMinutes = stopMinutes,
-                                RequiresDirectionChange = requiresDirectionChange
+                                RequiresDirectionChange = requiresDirectionChange,
+                                DelayMinutes = GetScheduleDeviationMinutes(t.LastArrivalScheduleDeviationSec)
                             });
                             if (requiresDirectionChange)
                                 cur.DirectionChangeAnnouncementVisitCount = t.ActualVisitCount;
@@ -810,6 +880,19 @@ namespace RailRouteAssistantDesktop
                 : 0;
         }
 
+        /// <summary>
+        /// 将有符号到站偏差换算为播报分钟。绝对值不超过一分钟按正点处理；
+        /// 负数表示早点，正数表示晚点。
+        /// </summary>
+        private static int? GetScheduleDeviationMinutes(double? deviationSeconds)
+        {
+            if (!deviationSeconds.HasValue) return null;
+            if (Math.Abs(deviationSeconds.Value) <= 60.0) return 0;
+
+            int minutes = Math.Max(1, (int)Math.Floor(Math.Abs(deviationSeconds.Value) / 60.0));
+            return deviationSeconds.Value < 0 ? -minutes : minutes;
+        }
+
         /// <summary>只有计划访问序列的中间站才播报通过信息与发车前预告。</summary>
         private static bool IsIntermediateScheduledVisit(TrainData t)
         {
@@ -899,6 +982,7 @@ namespace RailRouteAssistantDesktop
                 ActualVisitCount = t.ActualVisitCount, ScheduledVisitCount = t.ScheduledVisitCount, ScheduledVisitIndex = t.ScheduledVisitIndex, LastVisitStation = t.LastVisitStation,
                 LastVisitPlatform = t.LastVisitPlatform, LastVisitNonStop = t.LastVisitNonStop,
                 LastVisitStopMinutes = t.LastVisitStopMinutes, LastVisitDeparted = t.LastVisitDeparted,
+                LastArrivalScheduleDeviationSec = t.LastArrivalScheduleDeviationSec,
                 LastDepartureScheduleDelaySec = t.LastDepartureScheduleDelaySec,
                 RequiresDirectionChange = t.RequiresDirectionChange,
                 CurrentStation = t.CurrentStation, CurrentPlatform = t.CurrentPlatform,
@@ -1108,6 +1192,8 @@ namespace RailRouteAssistantDesktop
         public int ActualVisitCount; public int ScheduledVisitCount; public int ScheduledVisitIndex = -1;
         public string LastVisitStation; public int LastVisitPlatform; public bool LastVisitNonStop;
         public int LastVisitStopMinutes; public bool LastVisitDeparted;
+        // 最近一次到站相对计划到达时刻的有符号秒数：负数早点、正数晚点。
+        public double? LastArrivalScheduleDeviationSec;
         // 本次刚发车时按游戏时钟固定的实际晚点秒数；null 表示插件无法取得绝对计划时刻。
         public double? LastDepartureScheduleDelaySec;
         public bool RequiresDirectionChange;

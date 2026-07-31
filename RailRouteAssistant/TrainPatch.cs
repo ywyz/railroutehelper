@@ -298,12 +298,23 @@ namespace RailRouteAssistant
         // 时立即固定晚点值，避免后续采集因列车已经在运行而把行车时间误算成晚点。
         private static readonly Dictionary<string, DepartureDelaySample> _departureDelaySamples = new Dictionary<string, DepartureDelaySample>();
         private static readonly object _departureDelaySamplesLock = new object();
+        // 到站正晚点必须在 ActualVisit 首次出现时固定；否则停站期间用当前游戏时钟
+        // 重算会让“晚点”随停车时间持续增长，也无法得到真实早点。
+        private static readonly Dictionary<string, ArrivalDeviationSample> _arrivalDeviationSamples = new Dictionary<string, ArrivalDeviationSample>();
+        private static readonly object _arrivalDeviationSamplesLock = new object();
 
         private sealed class DepartureDelaySample
         {
             public int ActualVisitCount;
             public double ScheduledDepartureGameTime;
             public double DelaySeconds;
+        }
+
+        private sealed class ArrivalDeviationSample
+        {
+            public int ActualVisitCount;
+            public double ScheduledArrivalGameTime;
+            public double DeviationSeconds;
         }
 
         public static void Move_Postfix(object __instance)
@@ -430,6 +441,12 @@ namespace RailRouteAssistant
                         {
                             s.CurrentDepartureScheduleDelaySeconds = Math.Max(0, now - s.CurrentDepartureGameTime.Value);
                         }
+                        // StationVisit.From 是本站计划到达时刻。ActualVisits 首次出现时的
+                        // 游戏时钟近似实际到达时刻，二者相减可得到系统未直接提供的早点。
+                        if (s.ActualVisitCount > 0 && s.LastVisitArrivalGameTime.HasValue)
+                        {
+                            s.LastArrivalScheduleDeviationSeconds = GetOrCaptureArrivalDeviation(s, now);
+                        }
                         // 发车播报与 LastVisitDeparted 使用同一个实际访问记录。第一次看到
                         // Departed=true 时固定差值；不能使用 Train.Delay，它会跨站保留。
                         if (s.LastVisitDeparted && s.LastVisitDepartureGameTime.HasValue)
@@ -444,6 +461,7 @@ namespace RailRouteAssistant
                         }
                     }
                     CleanupDepartureDelaySamples(snapshots);
+                    CleanupArrivalDeviationSamples(snapshots);
                 }
 
                 var alerts = AlertEngine.Evaluate(snapshots);
@@ -796,6 +814,48 @@ namespace RailRouteAssistant
             }
         }
 
+        /// <summary>
+        /// 固定最近一次实际访问的“实际到达游戏时钟 - 计划到达时刻”。
+        /// 结果保留符号：负数为早点，正数为晚点。
+        /// </summary>
+        private static double GetOrCaptureArrivalDeviation(TrainSnapshot snap, double gameTimeSeconds)
+        {
+            var trainKey = !string.IsNullOrEmpty(snap.TrainId) ? snap.TrainId : snap.TrainName;
+            var scheduledArrival = snap.LastVisitArrivalGameTime.Value;
+            lock (_arrivalDeviationSamplesLock)
+            {
+                if (_arrivalDeviationSamples.TryGetValue(trainKey, out var existing) &&
+                    existing.ActualVisitCount == snap.ActualVisitCount &&
+                    existing.ScheduledArrivalGameTime == scheduledArrival)
+                {
+                    return existing.DeviationSeconds;
+                }
+
+                var deviationSeconds = gameTimeSeconds - scheduledArrival;
+                _arrivalDeviationSamples[trainKey] = new ArrivalDeviationSample
+                {
+                    ActualVisitCount = snap.ActualVisitCount,
+                    ScheduledArrivalGameTime = scheduledArrival,
+                    DeviationSeconds = deviationSeconds
+                };
+                return deviationSeconds;
+            }
+        }
+
+        private static void CleanupArrivalDeviationSamples(List<TrainSnapshot> snapshots)
+        {
+            var activeTrainKeys = new HashSet<string>(snapshots
+                .Where(s => s.IsOnBoard && !s.IsDisposed)
+                .Select(s => !string.IsNullOrEmpty(s.TrainId) ? s.TrainId : s.TrainName)
+                .Where(key => !string.IsNullOrEmpty(key)));
+
+            lock (_arrivalDeviationSamplesLock)
+            {
+                var stale = _arrivalDeviationSamples.Keys.Where(key => !activeTrainKeys.Contains(key)).ToList();
+                foreach (var key in stale) _arrivalDeviationSamples.Remove(key);
+            }
+        }
+
         private static void CollectSignalInfo(object train, TrainSnapshot snap)
         {
             try
@@ -903,7 +963,7 @@ namespace RailRouteAssistant
                 }
 
                 ReadStationVisit(visit, out var station, out var platform, out var nonStop,
-                    out _, out _, out _, out _);
+                    out _, out _, out _, out _, out _);
                 snap.NextStationName = station;
                 snap.NextPlatformNumber = platform;
                 snap.NextStationNonStop = nonStop;
@@ -931,11 +991,12 @@ namespace RailRouteAssistant
                 if (visit == null) return;
 
                 ReadStationVisit(visit, out var station, out var platform, out var nonStop,
-                    out var stopMinutes, out var departureTime, out _, out var departed);
+                    out var stopMinutes, out var arrivalTime, out var departureTime, out _, out var departed);
                 snap.LastVisitStationName = station;
                 snap.LastVisitPlatformNumber = platform;
                 snap.LastVisitNonStop = nonStop;
                 snap.LastVisitStopDurationMinutes = stopMinutes;
+                snap.LastVisitArrivalGameTime = arrivalTime;
                 snap.LastVisitDepartureGameTime = departureTime;
                 snap.LastVisitDeparted = departed;
             }
@@ -967,7 +1028,7 @@ namespace RailRouteAssistant
                     if (visit != null)
                     {
                         ReadStationVisit(visit, out var station, out var platform, out var nonStop,
-                            out var stopMinutes, out var departureTime, out _, out _);
+                            out var stopMinutes, out _, out var departureTime, out _, out _);
                         if (!nonStop)
                         {
                             snap.CurrentStationName = station;
@@ -1015,13 +1076,14 @@ namespace RailRouteAssistant
         }
 
         private static void ReadStationVisit(object visit, out string stationName, out int platformNumber,
-            out bool nonStop, out int stopDurationMinutes, out double? departureGameTime,
+            out bool nonStop, out int stopDurationMinutes, out double? arrivalGameTime, out double? departureGameTime,
             out bool relativeTimes, out bool departed)
         {
             stationName = "";
             platformNumber = 0;
             nonStop = false;
             stopDurationMinutes = 0;
+            arrivalGameTime = null;
             departureGameTime = null;
             relativeTimes = false;
             departed = false;
@@ -1042,7 +1104,10 @@ namespace RailRouteAssistant
                 }
 
                 if (!relativeTimes)
+                {
+                    arrivalGameTime = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(visit));
                     departureGameTime = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(visit));
+                }
 
                 var station = ReflectCache.VisitStation?.GetValue(visit);
                 if (station == null) return;

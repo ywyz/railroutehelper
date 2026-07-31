@@ -4,6 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>RailRouteAssistant</AssemblyName>
     <RootNamespace>RailRouteAssistant</RootNamespace>
+    <Version>2.3.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <!-- CI 构建时由 workflow 提供 GameDir 指向下载的 BepInEx 目录 -->
@@ -38,6 +39,13 @@
       <HintPath>$(ManagedDir)\RailRoute.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- GitHub Actions 没有也不应分发游戏 DLL。仅在游戏 Managed 目录不可用时，
+       用最小类型桩满足 BaseUnityPlugin 的编译期继承链；桩不会进入发布包。 -->
+  <ItemGroup Condition="!Exists('$(ManagedDir)\UnityEngine.dll')">
+    <ProjectReference Include="..\build\UnityEngine.CoreModule.Stub\UnityEngine.CoreModule.Stub.csproj"
+                      Private="false" />
   </ItemGroup>
 
   <Target Name="CopyToPlugins" AfterTargets="Build" Condition="Exists('$(PluginOutputDir)')">

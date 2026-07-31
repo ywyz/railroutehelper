@@ -136,13 +136,15 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | 类型 | 触发条件 | 播报内容 |
 |------|----------|----------|
 | 列车接近 | `Waiting` 由 false→true（等待入图） | 开往xxx方向的列车 车号 接近。 |
-| 列车停站 | 实际访问次数增加且本次不是通过站 | 开往xxx方向的列车 车号 已经停靠xx站台，本次停车x分。 |
+| 列车到站 | 实际访问次数增加且本次不是通过站 | 开往xxx方向的列车 车号 早点x分/正点/晚点x分到达xx站x道，本次停车x分。 |
 | 列车通过 | 实际访问次数增加、本次为通过站，且本站位于地图中间 | 开往xxx方向的列车 车号 通过xx站x道，下一站xx站x道。 |
 | 到站调向 | 游戏原生 `StopAndReverse` 或 `ReverseOnceStopped` 为真，且本次为停车访问 | 接在到站播报末尾：本次列车需要调向。若标志在到站后才刷新，则在停站期间补播一次。 |
 | 发车前预告 | 中间停站的 `departureRemainingSec` 首次进入 60 秒以内 | xx站xx道 车号列车 即将发车，请做好准备。 |
 | 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。晚点由“该站计划发车时刻”和当前游戏时钟计算，超过 60 秒才按晚点播报；不会使用跨站累积的游戏 `Train.Delay`。 |
 
 - **终到站**：由车次库（12306 数据）查询拆分后的车号得到，查不到时省略"开往xxx方向"段
+- **到站正晚点**：插件在一次 `ActualVisit` 首次出现时固定“游戏时钟 - `StationVisit.From`”；负数为早点、正数为晚点，绝对值不超过 60 秒按正点播报。游戏没有单独的早点字段，早点由此计算。
+- **分钟读法**：停车和正晚点分钟使用中文基数词；例如 7、15、48、120 分分别读“七分、十五分、四十八分、一百二十分”。车号继续逐位读。
 - **防重复**：同一车号 + 同一播报类型，30 秒内不重复触发；发车前预告对同一次实际访问只播报一次
 - **合并车号**：状态追踪用原始车号（避免 G4545/G4546 双重播报），播报时用拆分后的第一段车号
 - **首站与末站**：由游戏 `ScheduledVisits` 的首尾索引精确识别；两站均不播报“通过”，也不播报发车前一分钟预告。
@@ -171,6 +173,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 ### 桌面程序 UI
 
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
+- **搜索框**：输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
 列车列表列：`车号 | 始发 | 终到 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台`
@@ -244,18 +247,18 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 
 ## 安装
 
-### 前提条件
-- Rail Route 游戏（Steam 版）
-- [BepInEx 5.x](https://github.com/BepInEx/BepInEx) (x64)
-- .NET 8 运行时（桌面程序）
+### Release 一体包（推荐）
 
-### 步骤
+1. 从 GitHub Release 下载并解压 `RailRouteAssistant-Windows-x64.zip`。
+2. 运行 `RailRouteAssistantDesktop.exe`。程序会扫描 Steam 库；找不到时让用户选择包含 `Rail Route.exe` 的游戏目录。
+3. 确认后自动安装包内的 BepInEx 5.4.23.5 x64 和插件；默认 Steam 目录需要写权限时，只在安装阶段请求管理员权限。
+4. 安装完成后自动通过 Steam 启动 Rail Route。以后运行同一桌面程序会记住游戏目录并自动启动游戏。
 
-1. 安装 BepInEx 5.x 到 Rail Route 游戏目录：
-   ```
-   C:\Program Files (x86)\Steam\steamapps\common\Rail Route\BepInEx\
-   ```
+一体包为 self-contained，不要求目标电脑另装 .NET 8。BepInEx 5.4.23.5 原样按 MIT License 再分发并随包附许可证；不包含任何 Rail Route 或 Unity 文件。
 
+### 开发构建
+
+1. 本机安装 BepInEx 5.x 到 Rail Route 游戏目录。
 2. 编译插件：
    ```shell
    dotnet build RailRouteAssistant/RailRouteAssistant.csproj -c Release
@@ -271,7 +274,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
    dotnet publish RailRouteAssistantDesktop/RailRouteAssistantDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
    ```
 
-4. 启动游戏，进入有列车的地图
+4. 启动游戏，进入有列车的地图。
 
 5. 运行桌面程序：
    ```
@@ -315,6 +318,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
       "platform": 3,
       "nextStation": "南京站",
       "lastVisitDeparted": false,
+      "lastArrivalScheduleDeviationSec": -125,
       "lastDepartureScheduleDelaySec": null,
       "requiresDirectionChange": false,
       "departureRemainingSec": 150,
@@ -341,6 +345,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 |------|------|------|
 | `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
 | `delay` | number | 游戏原始的累计延误值；不用于判断单次发车是否晚点 |
+| `lastArrivalScheduleDeviationSec` | number \| null | 最近一次实际到站首次观察时固定的“游戏时钟 - 该站计划到达时刻”；负数为早点、正数为晚点 |
 | `lastDepartureScheduleDelaySec` | number \| null | 最近一次实际发车时，首次按“游戏时钟 - 该站计划发车时刻”固定的晚点秒数；供发车播报使用 |
 | `currentDepartureScheduleDelaySec` | number \| null | 当前到站停车相对本站计划发车时刻的晚点秒数；供“即将发车”告警与停站列表使用 |
 | `requiresDirectionChange` | boolean | 游戏原生调向标志（`StopAndReverse` 或 `ReverseOnceStopped`）；仅停站播报使用 |
@@ -440,6 +445,7 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── Program.cs                 # 入口
+├── GameInstallationManager.cs # 一体包首次安装、Steam 路径发现与自动启动
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
 ├── TrainInfoService.cs        # 12306 在线 → 路路通 → 静态 12306 快照的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
