@@ -294,6 +294,17 @@ namespace RailRouteAssistant
         // 保存对象本身而非一次性状态，使进路后来开通时可在下一次快照中立即消警。
         private static readonly Dictionary<string, object> _immediateSignalWatches = new Dictionary<string, object>();
         private static readonly object _immediateSignalWatchesLock = new object();
+        // 以“列车 + 实际访问次数 + 计划发车时刻”标识一次发车；首次观测到 Departed
+        // 时立即固定晚点值，避免后续采集因列车已经在运行而把行车时间误算成晚点。
+        private static readonly Dictionary<string, DepartureDelaySample> _departureDelaySamples = new Dictionary<string, DepartureDelaySample>();
+        private static readonly object _departureDelaySamplesLock = new object();
+
+        private sealed class DepartureDelaySample
+        {
+            public int ActualVisitCount;
+            public double ScheduledDepartureGameTime;
+            public double DelaySeconds;
+        }
 
         public static void Move_Postfix(object __instance)
         {
@@ -412,6 +423,19 @@ namespace RailRouteAssistant
                             var rem = s.CurrentDepartureGameTime.Value - now;
                             s.DepartureRemainingSeconds = rem > 0 ? rem : 0;
                         }
+                        // 当前停站的晚点提示必须以本站 StationVisit.To 与游戏时钟为准。
+                        // 只有真的因进站停车时才提供该值，避免运行中把上一站的发车时刻
+                        // 误作“当前晚点”。
+                        if (s.CurrentDepartureGameTime.HasValue && IsStoppedAtStation(s))
+                        {
+                            s.CurrentDepartureScheduleDelaySeconds = Math.Max(0, now - s.CurrentDepartureGameTime.Value);
+                        }
+                        // 发车播报与 LastVisitDeparted 使用同一个实际访问记录。第一次看到
+                        // Departed=true 时固定差值；不能使用 Train.Delay，它会跨站保留。
+                        if (s.LastVisitDeparted && s.LastVisitDepartureGameTime.HasValue)
+                        {
+                            s.LastDepartureScheduleDelaySeconds = GetOrCaptureDepartureDelay(s, now);
+                        }
                         // 停车时长 = 当前游戏时间 - 停车起始时间
                         if (s.NotMovingSinceGameTime.HasValue)
                         {
@@ -419,6 +443,7 @@ namespace RailRouteAssistant
                             s.NotMovingDuration = dur > 0 ? dur : 0;
                         }
                     }
+                    CleanupDepartureDelaySamples(snapshots);
                 }
 
                 var alerts = AlertEngine.Evaluate(snapshots);
@@ -720,6 +745,54 @@ namespace RailRouteAssistant
             {
                 var stale = _immediateSignalWatches.Keys.Where(id => !activeIds.Contains(id)).ToList();
                 foreach (var id in stale) _immediateSignalWatches.Remove(id);
+            }
+        }
+
+        private static bool IsStoppedAtStation(TrainSnapshot snap)
+        {
+            return snap.CurrentSpeed == 0 && !string.IsNullOrEmpty(snap.StopReasons) &&
+                snap.StopReasons.Contains("Station");
+        }
+
+        /// <summary>
+        /// 记录本次实际发车第一次被采集到时的“游戏时钟 - 本站计划发车时刻”。
+        /// 同一次访问后续快照复用该值，以免它随列车继续运行而持续增长。
+        /// </summary>
+        private static double GetOrCaptureDepartureDelay(TrainSnapshot snap, double gameTimeSeconds)
+        {
+            var trainKey = !string.IsNullOrEmpty(snap.TrainId) ? snap.TrainId : snap.TrainName;
+            var scheduledDeparture = snap.LastVisitDepartureGameTime.Value;
+            lock (_departureDelaySamplesLock)
+            {
+                if (_departureDelaySamples.TryGetValue(trainKey, out var existing) &&
+                    existing.ActualVisitCount == snap.ActualVisitCount &&
+                    existing.ScheduledDepartureGameTime == scheduledDeparture)
+                {
+                    return existing.DelaySeconds;
+                }
+
+                var delaySeconds = Math.Max(0, gameTimeSeconds - scheduledDeparture);
+                _departureDelaySamples[trainKey] = new DepartureDelaySample
+                {
+                    ActualVisitCount = snap.ActualVisitCount,
+                    ScheduledDepartureGameTime = scheduledDeparture,
+                    DelaySeconds = delaySeconds
+                };
+                return delaySeconds;
+            }
+        }
+
+        private static void CleanupDepartureDelaySamples(List<TrainSnapshot> snapshots)
+        {
+            var activeTrainKeys = new HashSet<string>(snapshots
+                .Where(s => s.IsOnBoard && !s.IsDisposed)
+                .Select(s => !string.IsNullOrEmpty(s.TrainId) ? s.TrainId : s.TrainName)
+                .Where(key => !string.IsNullOrEmpty(key)));
+
+            lock (_departureDelaySamplesLock)
+            {
+                var stale = _departureDelaySamples.Keys.Where(key => !activeTrainKeys.Contains(key)).ToList();
+                foreach (var key in stale) _departureDelaySamples.Remove(key);
             }
         }
 

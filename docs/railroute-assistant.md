@@ -22,7 +22,7 @@ Rail Route 游戏 (Unity 进程)
 ### 数据采集
 通过 Harmony 补丁和反射读取游戏内部数据：
 
-- 列车基本信息：车号、速度、目标速度、延误、最大速度、是否需调向
+- 列车基本信息：车号、速度、目标速度、游戏原始累计延误、最大速度、是否需调向
 - 运行状态：是否在线、是否可发车、是否已完成、是否故障
 - 信号状态：紧邻下一座同向运营信号的状态（开放/未开放/占用/调车/未知）
 - 信号机详情：AllocationState、Type（Manual/Auto/Shunting）、IsPendingRoute
@@ -140,12 +140,13 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | 列车通过 | 实际访问次数增加、本次为通过站，且本站位于地图中间 | 开往xxx方向的列车 车号 通过xx站x道，下一站xx站x道。 |
 | 到站调向 | 游戏原生 `StopAndReverse` 或 `ReverseOnceStopped` 为真，且本次为停车访问 | 接在到站播报末尾：本次列车需要调向。若标志在到站后才刷新，则在停站期间补播一次。 |
 | 发车前预告 | 中间停站的 `departureRemainingSec` 首次进入 60 秒以内 | xx站xx道 车号列车 即将发车，请做好准备。 |
-| 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。延误不超过 60 秒按正点处理。 |
+| 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。晚点由“该站计划发车时刻”和当前游戏时钟计算，超过 60 秒才按晚点播报；不会使用跨站累积的游戏 `Train.Delay`。 |
 
 - **终到站**：由车次库（12306 数据）查询拆分后的车号得到，查不到时省略"开往xxx方向"段
 - **防重复**：同一车号 + 同一播报类型，30 秒内不重复触发；发车前预告对同一次实际访问只播报一次
 - **合并车号**：状态追踪用原始车号（避免 G4545/G4546 双重播报），播报时用拆分后的第一段车号
 - **首站与末站**：由游戏 `ScheduledVisits` 的首尾索引精确识别；两站均不播报“通过”，也不播报发车前一分钟预告。
+- **时刻不可用时**：若游戏仅提供相对时刻，桌面端会播报“已经发车”，不会把旧的累计延误误报为本次晚点。
 
 **音频素材**：预录音频片段位于 `RailRouteAssistantDesktop/assets/audio/`，编译时自动复制到输出目录。素材来源：[gaotieguangboyinyuan](https://github.com/wangyetuoguan/gaotieguangboyinyuan)。
 
@@ -180,6 +181,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
   - 停站：到站停车（`StopReasons` 含 `Station`），附带停车时长和发车倒计时；需调向时额外显示“需调向”，如 `停站 需调向 已停2分15秒 还有1分30秒开车`
   - 停车：非到站停车，附带停车时长，如 `停车 已停15秒`
   - 可发车：达到发车条件但未启动
+- **延误列**：停站时优先显示由本站计划发车时刻与游戏时钟计算的值；运行中仍保留游戏原始累计值作诊断。
 - **前方停站列**：仅显示站名
 - **站台列**：显示站台号（如 `3台`）
 
@@ -312,7 +314,11 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
       "routeRemain": 3,
       "platform": 3,
       "nextStation": "南京站",
+      "lastVisitDeparted": false,
+      "lastDepartureScheduleDelaySec": null,
       "requiresDirectionChange": false,
+      "departureRemainingSec": 150,
+      "currentDepartureScheduleDelaySec": null,
       "stopReasons": "",
       "nextPrepareSec": 150,
       "nextArrivalSec": 300,
@@ -334,6 +340,9 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
+| `delay` | number | 游戏原始的累计延误值；不用于判断单次发车是否晚点 |
+| `lastDepartureScheduleDelaySec` | number \| null | 最近一次实际发车时，首次按“游戏时钟 - 该站计划发车时刻”固定的晚点秒数；供发车播报使用 |
+| `currentDepartureScheduleDelaySec` | number \| null | 当前到站停车相对本站计划发车时刻的晚点秒数；供“即将发车”告警与停站列表使用 |
 | `requiresDirectionChange` | boolean | 游戏原生调向标志（`StopAndReverse` 或 `ReverseOnceStopped`）；仅停站播报使用 |
 | `nextPrepareSec` | number \| null | 下一站发车准备剩余秒数（停站时为发车倒计时，等待入图时为入图倒计时） |
 | `nextArrivalSec` | number \| null | 下一站到达剩余秒数 |

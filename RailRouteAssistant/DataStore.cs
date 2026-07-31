@@ -55,12 +55,17 @@ namespace RailRouteAssistant
         public bool LastVisitDeparted;
         public bool RequiresDirectionChange;  // 游戏标记：本次到站后需调向
         internal double? LastVisitDepartureGameTime;
+        // 最近一次实际停站的发车晚点秒数：以该次 StationVisit.To 与游戏时钟计算，
+        // 且在检测到 Departed 时固定，绝不使用会跨站累积的 Train.Delay。
+        public double? LastDepartureScheduleDelaySeconds;
 
         // 当前计划停站。仅在列车真正停站时使用；To 为游戏内绝对发车时刻。
         public string CurrentStationName;
         public int CurrentPlatformNumber;
         public int CurrentStopDurationMinutes;
         public double? DepartureRemainingSeconds;
+        // 当前停站相对计划发车时刻的晚点秒数，仅供“即将发车”提示使用。
+        public double? CurrentDepartureScheduleDelaySeconds;
         internal double? CurrentDepartureGameTime;
         public string StopReasons;
         public List<string> RouteStepTrackIds = new List<string>(); // 前方进路步骤的轨道标识

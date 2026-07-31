@@ -141,11 +141,13 @@ namespace RailRouteAssistant
                 sb.Append("\"lastVisitNonStop\":").Append(s.LastVisitNonStop.ToString().ToLower()).Append(",");
                 sb.Append("\"lastVisitStopMinutes\":").Append(s.LastVisitStopDurationMinutes).Append(",");
                 sb.Append("\"lastVisitDeparted\":").Append(s.LastVisitDeparted.ToString().ToLower()).Append(",");
+                sb.Append("\"lastDepartureScheduleDelaySec\":").Append(s.LastDepartureScheduleDelaySeconds.HasValue ? s.LastDepartureScheduleDelaySeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"requiresDirectionChange\":").Append(s.RequiresDirectionChange.ToString().ToLower()).Append(",");
                 sb.Append("\"currentStation\":").Append(JsonStr(s.CurrentStationName)).Append(",");
                 sb.Append("\"currentPlatform\":").Append(s.CurrentPlatformNumber).Append(",");
                 sb.Append("\"currentStopMinutes\":").Append(s.CurrentStopDurationMinutes).Append(",");
                 sb.Append("\"departureRemainingSec\":").Append(s.DepartureRemainingSeconds.HasValue ? s.DepartureRemainingSeconds.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"currentDepartureScheduleDelaySec\":").Append(s.CurrentDepartureScheduleDelaySeconds.HasValue ? s.CurrentDepartureScheduleDelaySeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
                 sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
                 sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");

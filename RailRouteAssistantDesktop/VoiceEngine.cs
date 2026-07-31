@@ -70,8 +70,8 @@ namespace RailRouteAssistantDesktop
             public int StopMinutes;
             /// <summary>本次停站后游戏要求列车调向。</summary>
             public bool RequiresDirectionChange;
-            /// <summary>正数表示晚点分钟；零或负数按正点播报。</summary>
-            public int DelayMinutes;
+            /// <summary>正数表示晚点分钟；零按正点播报；null 表示无法可靠判断。</summary>
+            public int? DelayMinutes;
         }
 
         /// <summary>入队一条播报。</summary>
@@ -131,10 +131,16 @@ namespace RailRouteAssistantDesktop
                     // 开往 xx 方向的列车 车号 晚点 x 分发车，下一站 xx x道。
                     AddDirectionPrefix(segs, dest);
                     AddTrainNumber(segs, announcement.TrainCode);
-                    if (announcement.DelayMinutes > 0)
+                    if (!announcement.DelayMinutes.HasValue)
+                    {
+                        // 旧插件或 RelativeTimes 没有绝对计划时刻时，不能将累计 Train.Delay
+                        // 冒充本站晚点；保守地只确认已发车。
+                        AddTts(segs, "已经发车");
+                    }
+                    else if (announcement.DelayMinutes.Value > 0)
                     {
                         AddTts(segs, "晚点");
-                        AddNumber(segs, announcement.DelayMinutes);
+                        AddNumber(segs, announcement.DelayMinutes.Value);
                         AddTts(segs, "分发车");
                     }
                     else
