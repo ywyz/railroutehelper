@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -113,7 +114,7 @@ namespace RailRouteAssistant
                 sb.Append("\"speed\":").Append(s.CurrentSpeed).Append(",");
                 sb.Append("\"maxSpeed\":").Append(s.MaxSpeed).Append(",");
                 sb.Append("\"targetSpeed\":").Append(s.TargetSpeed.ToString("F1")).Append(",");
-                sb.Append("\"delay\":").Append(s.DelaySeconds.ToString("F0")).Append(",");
+                sb.Append("\"delay\":").Append(s.DelaySeconds.ToString("R", CultureInfo.InvariantCulture)).Append(",");
                 sb.Append("\"canDepart\":").Append(s.CanDepart.ToString().ToLower()).Append(",");
                 sb.Append("\"finished\":").Append(s.FinishedSchedule.ToString().ToLower()).Append(",");
                 sb.Append("\"brokenDown\":").Append(s.IsBrokenDown.ToString().ToLower()).Append(",");
@@ -140,6 +141,7 @@ namespace RailRouteAssistant
                 sb.Append("\"lastVisitNonStop\":").Append(s.LastVisitNonStop.ToString().ToLower()).Append(",");
                 sb.Append("\"lastVisitStopMinutes\":").Append(s.LastVisitStopDurationMinutes).Append(",");
                 sb.Append("\"lastVisitDeparted\":").Append(s.LastVisitDeparted.ToString().ToLower()).Append(",");
+                sb.Append("\"requiresDirectionChange\":").Append(s.RequiresDirectionChange.ToString().ToLower()).Append(",");
                 sb.Append("\"currentStation\":").Append(JsonStr(s.CurrentStationName)).Append(",");
                 sb.Append("\"currentPlatform\":").Append(s.CurrentPlatformNumber).Append(",");
                 sb.Append("\"currentStopMinutes\":").Append(s.CurrentStopDurationMinutes).Append(",");

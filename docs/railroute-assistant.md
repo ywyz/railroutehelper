@@ -22,7 +22,7 @@ Rail Route 游戏 (Unity 进程)
 ### 数据采集
 通过 Harmony 补丁和反射读取游戏内部数据：
 
-- 列车基本信息：车号、速度、目标速度、延误、最大速度
+- 列车基本信息：车号、速度、目标速度、延误、最大速度、是否需调向
 - 运行状态：是否在线、是否可发车、是否已完成、是否故障
 - 信号状态：紧邻下一座同向运营信号的状态（开放/未开放/占用/调车/未知）
 - 信号机详情：AllocationState、Type（Manual/Auto/Shunting）、IsPendingRoute
@@ -31,17 +31,17 @@ Rail Route 游戏 (Unity 进程)
 
 ### 车次始发、终到查询
 
-旧版使用的 `train_list.js` 是一次性的静态全量表，已经不能覆盖当前运行图；桌面端不再在启动时下载该表。现在只对当前地图中实际出现的车号发起查询，数据优先级如下：
+`train_list.js` 是已冻结的历史静态表，不能覆盖当前运行图；桌面端不会在启动时联网下载它。现在只对当前地图中实际出现的车号发起查询，并在后台加载随程序发布的离线表，数据优先级如下：
 
 | 优先级 | 数据源 | 行为 |
 |---|---|---|
-| 1 | 12306 按车号查询 | 请求 `https://search.12306.cn/search/v1/train/search?keyword={车次}&date={yyyyMMdd}`，在响应 `data[]` 中不区分大小写地精确匹配 `station_train_code`，直接读取 `from_station` / `to_station`。 |
-| 2 | 本机在线缓存 | 同一运行图日期内的成功查询保存在 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_online_cache.json`，下次启动可立即使用。 |
-| 3 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取随桌面程序发布的 `data\train_routes_offline.json`；如用户后来刷新本机表，`%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json` 会覆盖发布表。 |
+| 1 | 12306 按车号查询（含当天缓存） | 请求 `https://search.12306.cn/search/v1/train/search?keyword={车次}&date={yyyyMMdd}`，在响应 `data[]` 中不区分大小写地精确匹配 `station_train_code`，直接读取 `from_station` / `to_station`。同一运行图日期内的成功查询缓存在 `%LOCALAPPDATA%\RailRouteAssistant\train_routes_online_cache.json`。 |
+| 2 | 路路通离线降级表 | 在线超时、HTTP/解析失败、`data=[]` 或没有精确车号时，读取随桌面程序发布的 `data\train_routes_offline.json`；如用户后来刷新本机表，`%LOCALAPPDATA%\RailRouteAssistant\train_routes_offline.json` 会覆盖发布表。 |
+| 3 | 冻结的 12306 静态快照 | 路路通也没有该车次时，读取随桌面程序发布的 `data\train_list_12306_legacy.js`。该快照来自 `https://kyfw.12306.cn/otn/resources/js/query/train_list.js?scriptVersion=1.5462`，文件内最新日期为 2022-09-01，仅作最后降级，不会覆盖前两级结果。 |
 
 12306 的查询结果可能同时含有 `Z51`、`Z510` 等前缀相同的车次，因此绝不能取数组第一项。网络请求最长 5 秒、最多同时 3 个；同一失败车次会退避 10 分钟，不会因桌面端每秒刷新而反复请求。成功结果按“车次 + 当前运行图日期”缓存，且覆盖同车号的离线结果。
 
-路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。经授权，本发布包随附由该数据生成的规范化离线表；原始 APK 不会被包含。项目也提供本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。
+路路通 APK 中的离线资料是私有二进制分片而非 SQLite 文件。经授权，本发布包随附由该数据生成的规范化离线表；原始 APK 不会被包含。项目也提供本地导出器，它将 `res/DO`（显示车号索引）、`res/k5.dat`（同索引的 12306 内部车号）和 `res/hU.dat`（内部车号对应的始发、终到和经由站）精确关联。路线表的第一个经由站是始发站，独立的 `endStation` 字段才是终到站；不能把最后一个经由站误作终点。冻结 12306 快照的 SHA-256 为 `626F26355F71FD33C1BB304171C7B9284CE63B334B86B2FE8961EF551A5E18D4`，用于确认发布包内的静态文件未被意外替换。
 
 在用户自己的电脑上运行以下命令即可刷新降级表：
 
@@ -138,8 +138,9 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | 列车接近 | `Waiting` 由 false→true（等待入图） | 开往xxx方向的列车 车号 接近。 |
 | 列车停站 | 实际访问次数增加且本次不是通过站 | 开往xxx方向的列车 车号 已经停靠xx站台，本次停车x分。 |
 | 列车通过 | 实际访问次数增加、本次为通过站，且本站位于地图中间 | 开往xxx方向的列车 车号 通过xx站x道，下一站xx站x道。 |
+| 到站调向 | 游戏原生 `StopAndReverse` 或 `ReverseOnceStopped` 为真，且本次为停车访问 | 接在到站播报末尾：本次列车需要调向。若标志在到站后才刷新，则在停站期间补播一次。 |
 | 发车前预告 | 中间停站的 `departureRemainingSec` 首次进入 60 秒以内 | xx站xx道 车号列车 即将发车，请做好准备。 |
-| 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。 |
+| 列车发车 | 最近一次实际访问的 `Departed` 由 false→true（速度变化兜底） | 开往xxx方向的列车 车号 正点发车/晚点x分发车；地图内仍有停站时追加下一站xx站x道。延误不超过 60 秒按正点处理。 |
 
 - **终到站**：由车次库（12306 数据）查询拆分后的车号得到，查不到时省略"开往xxx方向"段
 - **防重复**：同一车号 + 同一播报类型，30 秒内不重复触发；发车前预告对同一次实际访问只播报一次
@@ -158,7 +159,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 
 **TTS 兜底**：以下内容无预录音频，使用 Windows 内置 `SpeechSynthesizer`（中文女声 Microsoft Huihui）合成：
 
-- 字母 `C/T/X`（读「城/特/行」，音频库缺这几个字母）
+- 字母 `C/T/X/S`（读「城/特/行/市域」，音频库缺这些字母）
 - 句式词 `开往` `方向` `方向的列车` `接近` `即将发车，请做好准备` `正点发车` `晚点` `分发车`
 - 所有站名（无法预录全量站名）
 
@@ -171,17 +172,16 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
-列车列表列：`车号 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台 | 转向`
+列车列表列：`车号 | 始发 | 终到 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台`
 
 - **信号列**：显示开放/关闭/无信号
 - **状态列**：显示运行中/停站/可发车/停车/等待入图/故障/完成
   - 运行中：在线且速度 > 0
-  - 停站：到站停车（`StopReasons` 含 `Station`），附带停车时长和发车倒计时，如 `停站 已停2分15秒 1分30秒发车`
+  - 停站：到站停车（`StopReasons` 含 `Station`），附带停车时长和发车倒计时；需调向时额外显示“需调向”，如 `停站 需调向 已停2分15秒 还有1分30秒开车`
   - 停车：非到站停车，附带停车时长，如 `停车 已停15秒`
   - 可发车：达到发车条件但未启动
 - **前方停站列**：仅显示站名
 - **站台列**：显示站台号（如 `3台`）
-- **转向列**：合并车号（如 `G3342G3343`，含2个以上字母）显示"需转向"
 
 列车排序优先级：故障 > 运行中 > 在线停车 > 在线其他 > 等待入图 > 其他 > 已完成
 
@@ -229,7 +229,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | T（特快）| 暗橙 | |
 | K（快速）| 暗黄 | |
 | L（临客）| 暗灰蓝 | |
-| S（市郊）| 暗紫 | |
+| S（市域）| 暗紫 | 播报读作「市域」 |
 | 数字 | 默认深灰 | |
 
 列车行颜色基于信号状态：
@@ -263,6 +263,10 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 3. 编译桌面程序：
    ```shell
    dotnet build RailRouteAssistantDesktop/RailRouteAssistantDesktop.csproj -c Release
+   ```
+   发布为单文件时，两级离线车次表会一并封装并在启动时自动解压，无需另行复制 `data` 目录：
+   ```shell
+   dotnet publish RailRouteAssistantDesktop/RailRouteAssistantDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
    ```
 
 4. 启动游戏，进入有列车的地图
@@ -308,6 +312,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
       "routeRemain": 3,
       "platform": 3,
       "nextStation": "南京站",
+      "requiresDirectionChange": false,
       "stopReasons": "",
       "nextPrepareSec": 150,
       "nextArrivalSec": 300,
@@ -329,6 +334,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
+| `requiresDirectionChange` | boolean | 游戏原生调向标志（`StopAndReverse` 或 `ReverseOnceStopped`）；仅停站播报使用 |
 | `nextPrepareSec` | number \| null | 下一站发车准备剩余秒数（停站时为发车倒计时，等待入图时为入图倒计时） |
 | `nextArrivalSec` | number \| null | 下一站到达剩余秒数 |
 | `notMovingSince` | number \| null | 列车停车起始 unix 时间戳（秒），桌面端据此计算"已停 X 分 Y 秒" |
@@ -426,9 +432,10 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── Program.cs                 # 入口
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
-├── TrainInfoService.cs        # 12306 在线优先 + 本机离线降级的车次始发终到查询
+├── TrainInfoService.cs        # 12306 在线 → 路路通 → 静态 12306 快照的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
 ├── assets/audio/              # 预录音频素材（69 个文件）
+├── data/                      # 路路通离线表与冻结的 12306 train_list.js 快照
 └── RailRouteAssistantDesktop.csproj
 
 tools/ExportLulutongTrainRoutes/ # 从用户本机 APK 导出离线车次降级表
