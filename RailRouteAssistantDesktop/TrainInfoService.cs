@@ -15,6 +15,7 @@ namespace RailRouteAssistantDesktop
     public enum TrainInfoSource
     {
         Offline,
+        Legacy12306,
         Online
     }
 
@@ -40,9 +41,10 @@ namespace RailRouteAssistantDesktop
     /// <summary>
     /// 车次始发终到查询服务。
     ///
-    /// 首次遇到车次时优先请求 12306 的按车号查询接口；请求尚未完成或失败时，
-    /// 同步查询会立即返回本机导出的路路通离线车次表。在线成功结果和本机离线表都位于
-    /// %LOCALAPPDATA%\RailRouteAssistant，不再尝试写入安装目录；也兼容随程序发布的只读离线表。
+    /// 查询优先级为：12306 当天在线精确结果、路路通离线车次表、12306 冻结静态表。
+    /// 首次遇到车次时会异步请求在线接口；同步查询绝不等待网络，并会立即按后两级降级。
+    /// 在线缓存与用户自行导出的路路通表位于 %LOCALAPPDATA%\RailRouteAssistant，
+    /// 两份随程序发布的离线表均为只读，不会向安装目录写入数据。
     /// </summary>
     public sealed class TrainInfoService : IDisposable
     {
@@ -51,9 +53,12 @@ namespace RailRouteAssistantDesktop
         private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
 
         private readonly HttpClient _http;
-        private readonly string[] _offlineDataPaths;
+        private readonly string[] _lulutongOfflineDataPaths;
+        private readonly string _legacy12306SnapshotPath;
         private readonly string _onlineCachePath;
-        private readonly ConcurrentDictionary<string, TrainInfo> _offline =
+        private readonly ConcurrentDictionary<string, TrainInfo> _lulutongOffline =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, TrainInfo> _legacy12306 =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, CachedTrainInfo> _online =
             new(StringComparer.OrdinalIgnoreCase);
@@ -74,34 +79,44 @@ namespace RailRouteAssistantDesktop
             string applicationDataDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "RailRouteAssistant");
-            _offlineDataPaths = new[]
+            _lulutongOfflineDataPaths = new[]
             {
                 Path.Combine(AppContext.BaseDirectory, "data", "train_routes_offline.json"),
                 Path.Combine(applicationDataDirectory, "train_routes_offline.json")
             };
+            _legacy12306SnapshotPath = Path.Combine(
+                AppContext.BaseDirectory, "data", "train_list_12306_legacy.js");
             _onlineCachePath = Path.Combine(applicationDataDirectory, "train_routes_online_cache.json");
         }
 
         public bool IsLoaded => Volatile.Read(ref _loaded) == 1;
-        public int OfflineCount => _offline.Count;
+        /// <summary>路路通表与 12306 静态表去重后的离线车次数。</summary>
+        public int OfflineCount => _lulutongOffline.Count +
+            _legacy12306.Keys.Count(code => !_lulutongOffline.ContainsKey(code));
+        public int LulutongOfflineCount => _lulutongOffline.Count;
+        public int Legacy12306Count => _legacy12306.Count;
         public int OnlineCount => _online.Count;
-        public int Count => _offline.Count + _online.Keys.Count(code => !_offline.ContainsKey(code));
+        public int Count => _online.Count +
+            _lulutongOffline.Keys.Count(code => !_online.ContainsKey(code)) +
+            _legacy12306.Keys.Count(code =>
+                !_online.ContainsKey(code) && !_lulutongOffline.ContainsKey(code));
 
         /// <summary>
-        /// 只加载本地离线表和上次成功的在线缓存；不在启动时下载过期的全量静态表。
+        /// 在后台加载两级离线表和上次成功的在线缓存；静态表随程序发布，绝不在启动时下载。
         /// </summary>
         public Task LoadAsync()
         {
             return Task.Run(() =>
             {
-                LoadOfflineRoutes();
+                LoadLulutongOfflineRoutes();
+                LoadLegacy12306Snapshot();
                 LoadOnlineCache();
                 Volatile.Write(ref _loaded, 1);
             });
         }
 
         /// <summary>
-        /// 纯内存查询，绝不阻塞桌面 UI。相同车号的在线结果优先于离线结果。
+        /// 纯内存查询，绝不阻塞桌面 UI。优先级：在线、路路通、12306 静态快照。
         /// </summary>
         public bool TryLookup(string code, out TrainInfo info)
         {
@@ -118,7 +133,10 @@ namespace RailRouteAssistantDesktop
                 return true;
             }
 
-            return _offline.TryGetValue(code, out info);
+            if (_lulutongOffline.TryGetValue(code, out info))
+                return true;
+
+            return _legacy12306.TryGetValue(code, out info);
         }
 
         /// <summary>
@@ -229,9 +247,9 @@ namespace RailRouteAssistantDesktop
             return null;
         }
 
-        private void LoadOfflineRoutes()
+        private void LoadLulutongOfflineRoutes()
         {
-            foreach (var offlineDataPath in _offlineDataPaths)
+            foreach (var offlineDataPath in _lulutongOfflineDataPaths)
             {
                 try
                 {
@@ -250,7 +268,7 @@ namespace RailRouteAssistantDesktop
                             continue;
 
                         // 本机导出表排在最后加载，因而可覆盖发布包内随版本附带的旧表。
-                        _offline[code] = new TrainInfo(
+                        _lulutongOffline[code] = new TrainInfo(
                             code,
                             route.Origin.Trim(),
                             route.Destination.Trim(),
@@ -262,6 +280,103 @@ namespace RailRouteAssistantDesktop
                     // 单个离线表损坏时继续尝试另一来源，后续仍可通过在线查询获取车次。
                 }
             }
+        }
+
+        /// <summary>
+        /// 读取随程序发布的 12306 train_list.js 冻结快照。该表已停止更新，
+        /// 仅在在线接口和路路通表均没有精确车次时才使用。
+        /// </summary>
+        private void LoadLegacy12306Snapshot()
+        {
+            try
+            {
+                if (!File.Exists(_legacy12306SnapshotPath)) return;
+
+                string script = File.ReadAllText(_legacy12306SnapshotPath, Encoding.UTF8);
+                int declaration = script.IndexOf("var train_list", StringComparison.Ordinal);
+                int jsonStart = declaration >= 0 ? script.IndexOf('{', declaration) : -1;
+                int jsonEnd = script.LastIndexOf('}');
+                if (jsonStart < 0 || jsonEnd < jsonStart) return;
+
+                string json = script.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return;
+
+                // 同一车次在快照的多个日期中可能重复；按较新的日期优先，
+                // 避免随机覆盖为更旧一天的始终到站。
+                foreach (var dateBucket in document.RootElement.EnumerateObject()
+                    .OrderByDescending(property => ParseLegacyDate(property.Name)))
+                {
+                    if (dateBucket.Value.ValueKind != JsonValueKind.Object) continue;
+
+                    foreach (var category in dateBucket.Value.EnumerateObject())
+                    {
+                        if (category.Value.ValueKind != JsonValueKind.Array) continue;
+
+                        foreach (var item in category.Value.EnumerateArray())
+                        {
+                            if (!TryReadString(item, "station_train_code", out var stationTrainCode) ||
+                                !TryParseLegacyStationTrainCode(stationTrainCode, out var codes,
+                                    out var origin, out var destination))
+                                continue;
+
+                            foreach (var code in codes)
+                            {
+                                // 保留快照中较新日期的第一条；在线和路路通仍会在查询时优先。
+                                _legacy12306.TryAdd(code, new TrainInfo(
+                                    code, origin, destination, TrainInfoSource.Legacy12306));
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 静态快照损坏或格式变化时，在线和路路通降级仍然可用。
+            }
+        }
+
+        private static DateTime ParseLegacyDate(string value)
+        {
+            return DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var result)
+                ? result
+                : DateTime.MinValue;
+        }
+
+        /// <summary>
+        /// 解析 12306 静态表中的 "Z51(北京-南通)"；带斜杠的联合车次会分别建立别名。
+        /// </summary>
+        private static bool TryParseLegacyStationTrainCode(
+            string stationTrainCode,
+            out string[] codes,
+            out string origin,
+            out string destination)
+        {
+            codes = null;
+            origin = null;
+            destination = null;
+            if (string.IsNullOrWhiteSpace(stationTrainCode)) return false;
+
+            int open = stationTrainCode.IndexOf('(');
+            int close = stationTrainCode.LastIndexOf(')');
+            if (open <= 0 || close <= open + 1) return false;
+
+            string route = stationTrainCode.Substring(open + 1, close - open - 1);
+            int separator = route.LastIndexOf('-');
+            if (separator <= 0 || separator >= route.Length - 1) return false;
+
+            origin = route.Substring(0, separator).Trim();
+            destination = route.Substring(separator + 1).Trim();
+            if (string.IsNullOrEmpty(origin) || string.IsNullOrEmpty(destination)) return false;
+
+            codes = stationTrainCode.Substring(0, open)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(NormalizeCode)
+                .Where(code => !string.IsNullOrEmpty(code))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return codes.Length > 0;
         }
 
         private void LoadOnlineCache()

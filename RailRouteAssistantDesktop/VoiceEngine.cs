@@ -34,7 +34,7 @@ namespace RailRouteAssistantDesktop
         private static readonly Dictionary<char, string> LetterReadingText = new()
         {
             { 'G', "高" }, { 'D', "动" }, { 'C', "城" }, { 'Z', "直" },
-            { 'K', "快" }, { 'T', "特" }, { 'X', "行" },
+            { 'K', "快" }, { 'T', "特" }, { 'X', "行" }, { 'S', "市域" },
         };
 
         public VoiceEngine(string audioDir)
@@ -55,7 +55,7 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>播报类型</summary>
-        public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing }
+        public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing, DirectionChange }
 
         /// <summary>一条播报所需的具名字段，避免将当前站与下一站的位置参数混用。</summary>
         public sealed class Announcement
@@ -68,6 +68,8 @@ namespace RailRouteAssistantDesktop
             public string NextStation;
             public int NextPlatform;
             public int StopMinutes;
+            /// <summary>本次停站后游戏要求列车调向。</summary>
+            public bool RequiresDirectionChange;
             /// <summary>正数表示晚点分钟；零或负数按正点播报。</summary>
             public int DelayMinutes;
         }
@@ -113,6 +115,8 @@ namespace RailRouteAssistantDesktop
                     {
                         AddTts(segs, "，本次停车时间待定。");
                     }
+                    if (announcement.RequiresDirectionChange)
+                        AddTts(segs, "本次列车需要调向。");
                     break;
 
                 case AnnouncementType.PreDeparture:
@@ -157,6 +161,10 @@ namespace RailRouteAssistantDesktop
                         AddNextStation(segs, announcement.NextStation, announcement.NextPlatform);
                     }
                     AddTts(segs, "。");
+                    break;
+
+                case AnnouncementType.DirectionChange:
+                    AddTts(segs, "本次列车需要调向。");
                     break;
             }
 

@@ -68,7 +68,7 @@ namespace RailRouteAssistantDesktop
             _ = Task.Run(async () =>
             {
                 await _trainInfo.LoadAsync();
-                Console.WriteLine($"[TrainInfo] 加载完成: 在线 {_trainInfo.OnlineCount}，离线 {_trainInfo.OfflineCount}");
+                Console.WriteLine($"[TrainInfo] 加载完成: 在线 {_trainInfo.OnlineCount}，路路通 {_trainInfo.LulutongOfflineCount}，12306快照 {_trainInfo.Legacy12306Count}");
             });
         }
 
@@ -390,6 +390,7 @@ namespace RailRouteAssistantDesktop
                             LastVisitNonStop = t.TryGetProperty("lastVisitNonStop", out var lvns) && lvns.ValueKind is JsonValueKind.True or JsonValueKind.False && lvns.GetBoolean(),
                             LastVisitStopMinutes = t.TryGetProperty("lastVisitStopMinutes", out var lvsm) && lvsm.ValueKind == JsonValueKind.Number ? lvsm.GetInt32() : 0,
                             LastVisitDeparted = t.TryGetProperty("lastVisitDeparted", out var lvd) && lvd.ValueKind is JsonValueKind.True or JsonValueKind.False && lvd.GetBoolean(),
+                            RequiresDirectionChange = t.TryGetProperty("requiresDirectionChange", out var rdc) && rdc.ValueKind is JsonValueKind.True or JsonValueKind.False && rdc.GetBoolean(),
                             CurrentStation = t.TryGetProperty("currentStation", out var cs) && cs.ValueKind == JsonValueKind.String ? cs.GetString() ?? "" : "",
                             CurrentPlatform = t.TryGetProperty("currentPlatform", out var cp) && cp.ValueKind == JsonValueKind.Number ? cp.GetInt32() : 0,
                             CurrentStopMinutes = t.TryGetProperty("currentStopMinutes", out var csm) && csm.ValueKind == JsonValueKind.Number ? csm.GetInt32() : 0,
@@ -639,7 +640,8 @@ namespace RailRouteAssistantDesktop
                     ActualVisitCount = t.ActualVisitCount,
                     LastVisitDeparted = t.LastVisitDeparted,
                     DepartureRemainingSec = t.DepartureRemainingSec,
-                    PreDepartureAnnouncementVisitCount = hadPrev ? prev.PreDepartureAnnouncementVisitCount : 0
+                    PreDepartureAnnouncementVisitCount = hadPrev ? prev.PreDepartureAnnouncementVisitCount : 0,
+                    DirectionChangeAnnouncementVisitCount = hadPrev ? prev.DirectionChangeAnnouncementVisitCount : -1
                 };
 
                 // 仅在已有上一帧状态时判断状态变化（避免启动时全员播报）
@@ -693,6 +695,7 @@ namespace RailRouteAssistantDesktop
                             string station = !string.IsNullOrEmpty(t.CurrentStation) ? t.CurrentStation : t.LastVisitStation;
                             int platform = t.CurrentPlatform > 0 ? t.CurrentPlatform : t.LastVisitPlatform;
                             int stopMinutes = t.CurrentStopMinutes > 0 ? t.CurrentStopMinutes : t.LastVisitStopMinutes;
+                            bool requiresDirectionChange = t.RequiresDirectionChange;
                             _voice.Enqueue(new VoiceEngine.Announcement
                             {
                                 Type = VoiceEngine.AnnouncementType.StoppedAtStation,
@@ -700,10 +703,27 @@ namespace RailRouteAssistantDesktop
                                 Destination = dest,
                                 Station = StripEnglishPrefix(station),
                                 Platform = platform,
-                                StopMinutes = stopMinutes
+                                StopMinutes = stopMinutes,
+                                RequiresDirectionChange = requiresDirectionChange
                             });
+                            if (requiresDirectionChange)
+                                cur.DirectionChangeAnnouncementVisitCount = t.ActualVisitCount;
                             Console.WriteLine($"[Voice] 停站: {announceCode} @ {station}{platform}台 停{stopMinutes}分 开往{dest}");
                         }
+                    }
+
+                    // 某些游戏版本会在列车到站后的下一次刷新才更新调向标志；
+                    // 此时补播独立提示，避免漏报，同时用实际访问序号保证每次停站只播报一次。
+                    if (t.RequiresDirectionChange && IsStationStop(t) &&
+                        cur.DirectionChangeAnnouncementVisitCount != t.ActualVisitCount &&
+                        ShouldAnnounce(announceCode, $"direction-change-{t.ActualVisitCount}", nowUtc))
+                    {
+                        _voice.Enqueue(new VoiceEngine.Announcement
+                        {
+                            Type = VoiceEngine.AnnouncementType.DirectionChange
+                        });
+                        cur.DirectionChangeAnnouncementVisitCount = t.ActualVisitCount;
+                        Console.WriteLine($"[Voice] 调向: {announceCode}");
                     }
 
                     // 3. 中间站发车前一分钟预告。以倒计时越过 60 秒为触发点，
@@ -740,9 +760,8 @@ namespace RailRouteAssistantDesktop
                             Destination = dest,
                             NextStation = hasNextMapStop ? StripEnglishPrefix(t.NextStation) : "",
                             NextPlatform = hasNextMapStop ? t.Platform : 0,
-                            // 只要游戏给出正延误就播报“晚点”；不足一分钟按 1 分钟提示，
-                            // 避免 20 秒延误被四舍五入成“正点”。
-                            DelayMinutes = t.Delay > 0 ? Math.Max(1, (int)Math.Ceiling(t.Delay / 60.0)) : 0
+                            // 延误不超过 60 秒按正点；超过后向上取整为播报分钟数。
+                            DelayMinutes = GetDepartureDelayMinutes(t.Delay)
                         });
                         Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest}" +
                             (hasNextMapStop ? $" -> {t.NextStation}{t.Platform}道" : "（出图/无下一停站）"));
@@ -774,6 +793,14 @@ namespace RailRouteAssistantDesktop
         {
             return !nonStop && !string.IsNullOrWhiteSpace(station) &&
                 !station.Contains("方向", StringComparison.Ordinal);
+        }
+
+        /// <summary>发车播报采用的延误分钟数；不超过一分钟按正点处理。</summary>
+        private static int GetDepartureDelayMinutes(double delaySeconds)
+        {
+            return delaySeconds > 60.0
+                ? Math.Max(1, (int)Math.Ceiling(delaySeconds / 60.0))
+                : 0;
         }
 
         /// <summary>只有计划访问序列的中间站才播报通过信息与发车前预告。</summary>
@@ -865,6 +892,7 @@ namespace RailRouteAssistantDesktop
                 ActualVisitCount = t.ActualVisitCount, ScheduledVisitCount = t.ScheduledVisitCount, ScheduledVisitIndex = t.ScheduledVisitIndex, LastVisitStation = t.LastVisitStation,
                 LastVisitPlatform = t.LastVisitPlatform, LastVisitNonStop = t.LastVisitNonStop,
                 LastVisitStopMinutes = t.LastVisitStopMinutes, LastVisitDeparted = t.LastVisitDeparted,
+                RequiresDirectionChange = t.RequiresDirectionChange,
                 CurrentStation = t.CurrentStation, CurrentPlatform = t.CurrentPlatform,
                 CurrentStopMinutes = t.CurrentStopMinutes, DepartureRemainingSec = t.DepartureRemainingSec,
                 StopReasons = t.StopReasons,
@@ -923,6 +951,7 @@ namespace RailRouteAssistantDesktop
             if (isStationStop)
             {
                 statusParts.Add("停站");
+                if (t.RequiresDirectionChange) statusParts.Add("需调向");
                 // 停车时长（NotMovingSince 现在直接是停车时长秒数）
                 if (t.NotMovingSince.HasValue && t.NotMovingSince.Value > 0)
                 {
@@ -1048,6 +1077,7 @@ namespace RailRouteAssistantDesktop
         public bool LastVisitDeparted;
         public double? DepartureRemainingSec;
         public int PreDepartureAnnouncementVisitCount;
+        public int DirectionChangeAnnouncementVisitCount;
     }
 
     public class TrainData
@@ -1063,6 +1093,7 @@ namespace RailRouteAssistantDesktop
         public int ActualVisitCount; public int ScheduledVisitCount; public int ScheduledVisitIndex = -1;
         public string LastVisitStation; public int LastVisitPlatform; public bool LastVisitNonStop;
         public int LastVisitStopMinutes; public bool LastVisitDeparted;
+        public bool RequiresDirectionChange;
         public string CurrentStation; public int CurrentPlatform; public int CurrentStopMinutes;
         public double? DepartureRemainingSec;  // 当前停站距发车剩余秒数
         public string StopReasons;

@@ -53,6 +53,7 @@ namespace RailRouteAssistant
         public bool LastVisitNonStop;
         public int LastVisitStopDurationMinutes;
         public bool LastVisitDeparted;
+        public bool RequiresDirectionChange;  // 游戏标记：本次到站后需调向
         internal double? LastVisitDepartureGameTime;
 
         // 当前计划停站。仅在列车真正停站时使用；To 为游戏内绝对发车时刻。

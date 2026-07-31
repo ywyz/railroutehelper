@@ -38,6 +38,7 @@ namespace RailRouteAssistant
         internal static PropertyInfo TrainCanDepart, TrainFinished, TrainBrokenDown, TrainOnBoard, TrainDisposed;
         internal static PropertyInfo TrainNotMovingSince, TrainSegmentsInLookahead, TrainActingSignal;
         internal static PropertyInfo TrainContractLeg, TrainNextStationVisits, TrainActualVisits, TrainLastVisited;
+        internal static PropertyInfo TrainStopAndReverse, TrainReverseOnceStopped;
 
         // Train 字段
         internal static FieldInfo TrainReportingNumber, TrainIsWaitingToBeSpawned, TrainActiveRouteRun, TrainStopReasons;
@@ -113,6 +114,8 @@ namespace RailRouteAssistant
                     TrainNextStationVisits = TrainType.GetProperty("NextStationVisits", bf);
                     TrainActualVisits = TrainType.GetProperty("ActualVisits", bf);
                     TrainLastVisited = TrainType.GetProperty("LastVisited", bf);
+                    TrainStopAndReverse = TrainType.GetProperty("StopAndReverse", bf);
+                    TrainReverseOnceStopped = TrainType.GetProperty("ReverseOnceStopped", bf);
                     TrainUuid = TrainType.GetProperty("Uuid", bf);
                     TrainHead = TrainType.GetProperty("Head", bf);
                     TrainOperationMode = TrainType.GetProperty("OperationMode", bf);
@@ -492,6 +495,8 @@ namespace RailRouteAssistant
                     IsOnBoard = ReflectCache.GetProp(train, ReflectCache.TrainOnBoard, false),
                     IsDisposed = ReflectCache.GetProp(train, ReflectCache.TrainDisposed, false),
                     IsWaitingToBeSpawned = ReflectCache.GetField(train, ReflectCache.TrainIsWaitingToBeSpawned, false),
+                    RequiresDirectionChange = ReflectCache.GetProp(train, ReflectCache.TrainStopAndReverse, false) ||
+                        ReflectCache.GetProp(train, ReflectCache.TrainReverseOnceStopped, false),
                 };
 
                 // Delay
