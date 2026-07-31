@@ -112,7 +112,13 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 |------|------|----------|
 | 可发车但下一信号不能通行 | 紧急 | `CanDepart=true` 且下一信号 `AllocationState != 1` |
 | 信号/区间阻挡导致停车 | 紧急 | 非到站停车且下一信号 `AllocationState != 1` |
+| 游戏明确报信号停车 | 紧急 | `StopReasons` 含 `Semaphore`；即使紧邻信号状态暂时读不到，也归类为信号停车，不再误报线路停车超时 |
 | 线路停车超时 | 警告 | 非到站停车超过 10 秒 |
+
+停车时长统一四舍五入到整秒并按中文分秒显示，例如 `95.6` 秒显示为
+`1分36秒`。当 `StopReasons=Semaphore` 但信号状态暂时不可读时，告警显示
+“前方信号未开放（可能因区间占用或进路未办理）”；只有读取到
+`AllocationState=Occupied` 时才明确写“前方区间占用”。
 
 #### 其他告警
 

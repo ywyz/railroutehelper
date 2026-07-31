@@ -44,6 +44,8 @@ namespace RailRouteAssistant
 
             bool hasSignal = snap.HasActingSignal;
             bool isRunning = snap.CurrentSpeed > 0;
+            bool stoppedForSemaphore = !string.IsNullOrEmpty(snap.StopReasons) &&
+                snap.StopReasons.Contains("Semaphore");
             bool trainBraking = snap.TargetSpeed < 0.5f;       // TargetSpeed ≈ 0
             bool trainSlowing = !trainBraking && snap.TargetSpeed > 0.5f && snap.TargetSpeed < snap.CurrentSpeed - 5; // TargetSpeed 开始下降
 
@@ -130,14 +132,19 @@ namespace RailRouteAssistant
                         TimestampMs = NowMs()
                     });
                 }
-                else if (!snap.CanDepart && !isStationStop && signalClosed)
+                else if (!snap.CanDepart && !isStationStop && (signalClosed || stoppedForSemaphore))
                 {
-                    // 非到站停车只有在下一座信号确实不能通行时才归因于信号/进路。
+                    // StopReasons=Semaphore 本身已经确认列车是被信号拦停。部分游戏状态下
+                    // 紧邻信号监视还未建立或 AllocationState 读取不到，不能因此误归类为
+                    // 普通“线路停车超时”；但无法读取状态时也不臆断究竟是占用还是未办进路。
+                    string stoppedReason = signalClosed
+                        ? signalReason
+                        : "前方信号未开放（可能因区间占用或进路未办理）";
                     alerts.Add(new AlertInfo
                     {
                         Level = "critical",
                         TrainName = snap.TrainName,
-                        Message = $"已停车 - {signalReason}{nextStation}",
+                        Message = $"信号停车{FormatStoppedDuration(snap.NotMovingDuration)} - {stoppedReason}{nextStation}",
                         TimestampMs = NowMs()
                     });
                 }
@@ -152,7 +159,7 @@ namespace RailRouteAssistant
                         {
                             Level = "warning",
                             TrainName = snap.TrainName,
-                            Message = $"线路停车{stoppedSec}s（{reason}）{nextStation}",
+                            Message = $"线路停车{FormatStoppedDuration(stoppedSec)}（{reason}）{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -415,6 +422,21 @@ namespace RailRouteAssistant
         {
             if (seconds < 60) return $"{(int)seconds}s";
             return $"{(int)(seconds / 60)}m{(int)(seconds % 60)}s";
+        }
+
+        /// <summary>停车时长按最接近的整秒显示，避免浮点尾数污染告警文本。</summary>
+        private static string FormatStoppedDuration(double? seconds)
+        {
+            if (!seconds.HasValue || seconds.Value <= 0) return "";
+
+            int totalSeconds = Math.Max(1, (int)Math.Round(seconds.Value, MidpointRounding.AwayFromZero));
+            if (totalSeconds < 60) return $" {totalSeconds}秒";
+
+            int minutes = totalSeconds / 60;
+            int remainingSeconds = totalSeconds % 60;
+            return remainingSeconds == 0
+                ? $" {minutes}分"
+                : $" {minutes}分{remainingSeconds}秒";
         }
     }
 }
