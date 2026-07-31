@@ -590,6 +590,9 @@ namespace RailRouteAssistant
                 // 下一站
                 CollectNextStation(train, snap);
 
+                // 当前地图内的完整计划停车表，供桌面端双击车次查看详情。
+                CollectScheduledStops(train, snap);
+
                 // 最近实际访问与当前计划停站。两者都不能用 NextStationVisit 代替：
                 // 到站时游戏会先从 NextStationVisits 移除本站。
                 CollectLastVisit(train, snap);
@@ -1003,6 +1006,56 @@ namespace RailRouteAssistant
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"CollectLastVisit 异常: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 采集当前地图内 ScheduledVisits 中的停车站。通过站（NonStop=true）不属于
+        /// “停车站点”，因此不输出；RelativeTimes 仍保留原始相对时刻供 UI 标注显示，
+        /// 但不会被其他逻辑当成绝对游戏时钟使用。
+        /// </summary>
+        private static void CollectScheduledStops(object train, TrainSnapshot snap)
+        {
+            try
+            {
+                var visits = ReflectCache.TrainScheduledVisits?.GetValue(train) as System.Collections.IEnumerable;
+                if (visits == null) return;
+
+                int total = 0;
+                foreach (var visit in visits)
+                {
+                    total++;
+                    if (visit == null) continue;
+
+                    ReadStationVisit(visit, out var station, out var platform, out var nonStop,
+                        out var stopMinutes, out var arrivalTime, out var departureTime,
+                        out var relativeTimes, out _);
+                    if (nonStop) continue;
+
+                    // ReadStationVisit 对相对时刻有意返回 null，防止运行逻辑误用；详情表只做
+                    // 展示，因此在这里单独读取原始 From/To，并显式携带 RelativeTimes 标志。
+                    if (relativeTimes)
+                    {
+                        arrivalTime = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(visit));
+                        departureTime = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(visit));
+                    }
+
+                    snap.ScheduledStops.Add(new ScheduledStopSnapshot
+                    {
+                        StationName = station,
+                        PlatformNumber = platform,
+                        ArrivalGameTimeSeconds = arrivalTime,
+                        DepartureGameTimeSeconds = departureTime,
+                        StopDurationMinutes = stopMinutes,
+                        RelativeTimes = relativeTimes
+                    });
+                }
+
+                snap.ScheduledVisitCount = total;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"CollectScheduledStops 异常: {ex.Message}");
             }
         }
 

@@ -3,6 +3,17 @@ using System.Collections.Generic;
 
 namespace RailRouteAssistant
 {
+    /// <summary>列车在当前游戏地图中的一项计划停车。</summary>
+    public class ScheduledStopSnapshot
+    {
+        public string StationName;
+        public int PlatformNumber;
+        public double? ArrivalGameTimeSeconds;
+        public double? DepartureGameTimeSeconds;
+        public int StopDurationMinutes;
+        public bool RelativeTimes;
+    }
+
     /// <summary>
     /// 列车快照
     /// </summary>
@@ -46,6 +57,7 @@ namespace RailRouteAssistant
         // 因而这里才是播报本站与识别通过站的可靠来源。
         public int ActualVisitCount;
         public int ScheduledVisitCount;      // 本趟列车地图内计划访问总数，用于识别首站/末站
+        public List<ScheduledStopSnapshot> ScheduledStops = new List<ScheduledStopSnapshot>();
         // 最近一次实际访问（或当前停站）在 ScheduledVisits 中的零基索引；-1 表示未知。
         public int CurrentScheduledVisitIndex = -1;
         public string LastVisitStationName;

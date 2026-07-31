@@ -283,6 +283,14 @@ namespace RailRouteAssistantDesktop
                 SelectTrainInList(firstName);
             };
 
+            // 双击列车行 -> 显示始发、终到和当前地图内的完整计划停车表。
+            _trainList.MouseDoubleClick += (s, e) =>
+            {
+                var hit = _trainList.HitTest(e.Location);
+                if (hit?.Item?.Tag is TrainData train)
+                    ShowTrainDetails(train);
+            };
+
             // 失去焦点时恢复置顶（避免被游戏窗口盖住）
             Deactivate += (s, e) =>
             {
@@ -417,8 +425,10 @@ namespace RailRouteAssistantDesktop
 
                 _trains.Clear();
                 if (root.TryGetProperty("trains", out var trainsEl))
+                {
                     foreach (var t in trainsEl.EnumerateArray())
-                        _trains.Add(new TrainData
+                    {
+                        var train = new TrainData
                         {
                             Id = t.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : "",
                             Name = t.GetProperty("name").GetString() ?? "?",
@@ -459,7 +469,27 @@ namespace RailRouteAssistantDesktop
                             NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null,
                             SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
                             FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
-                        });
+                        };
+
+                        if (t.TryGetProperty("scheduledStops", out var stopsEl) && stopsEl.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var stop in stopsEl.EnumerateArray())
+                            {
+                                train.ScheduledStops.Add(new ScheduledStopData
+                                {
+                                    Station = stop.TryGetProperty("station", out var station) && station.ValueKind == JsonValueKind.String ? station.GetString() ?? "" : "",
+                                    Platform = stop.TryGetProperty("platform", out var platform) && platform.ValueKind == JsonValueKind.Number ? platform.GetInt32() : 0,
+                                    ArrivalTimeSec = stop.TryGetProperty("arrivalTimeSec", out var arrival) && arrival.ValueKind == JsonValueKind.Number ? arrival.GetDouble() : null,
+                                    DepartureTimeSec = stop.TryGetProperty("departureTimeSec", out var departure) && departure.ValueKind == JsonValueKind.Number ? departure.GetDouble() : null,
+                                    StopMinutes = stop.TryGetProperty("stopMinutes", out var stopMinutes) && stopMinutes.ValueKind == JsonValueKind.Number ? stopMinutes.GetInt32() : 0,
+                                    RelativeTimes = stop.TryGetProperty("relativeTimes", out var relative) && relative.ValueKind is JsonValueKind.True or JsonValueKind.False && relative.GetBoolean()
+                                });
+                            }
+                        }
+
+                        _trains.Add(train);
+                    }
+                }
 
                 // 每趟出现的列车都在后台按车号精确查询；不阻塞本次 UI/语音刷新。
                 PreloadTrainInfo();
@@ -611,7 +641,7 @@ namespace RailRouteAssistantDesktop
 
         private ListViewItem CreateTrainItem(TrainData t)
         {
-            var item = new ListViewItem(t.Name);
+            var item = new ListViewItem(t.Name) { Tag = t };
             item.SubItems.Add(""); // 始发
             item.SubItems.Add(""); // 终到
             item.SubItems.Add(""); // km/h
@@ -622,6 +652,30 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add(""); // 站台
             UpdateTrainItem(item, t);
             return item;
+        }
+
+        private void ShowTrainDetails(TrainData train)
+        {
+            if (train == null) return;
+
+            string origin = "未知";
+            string destination = "未知";
+            if (_trainInfo.TryLookup(train.Name, out var info))
+            {
+                origin = StripEnglishPrefix(info.Origin);
+                destination = StripEnglishPrefix(info.Destination);
+            }
+            else
+            {
+                _ = _trainInfo.EnsureResolvedAsync(train.Name);
+            }
+
+            using var dialog = new TrainDetailsForm(
+                train.Name,
+                origin,
+                destination,
+                train.ScheduledStops);
+            dialog.ShowDialog(this);
         }
 
         /// <summary>
@@ -989,6 +1043,15 @@ namespace RailRouteAssistantDesktop
                 CurrentStopMinutes = t.CurrentStopMinutes, DepartureRemainingSec = t.DepartureRemainingSec,
                 CurrentDepartureScheduleDelaySec = t.CurrentDepartureScheduleDelaySec,
                 StopReasons = t.StopReasons,
+                ScheduledStops = t.ScheduledStops.Select(stop => new ScheduledStopData
+                {
+                    Station = stop.Station,
+                    Platform = stop.Platform,
+                    ArrivalTimeSec = stop.ArrivalTimeSec,
+                    DepartureTimeSec = stop.DepartureTimeSec,
+                    StopMinutes = stop.StopMinutes,
+                    RelativeTimes = stop.RelativeTimes
+                }).ToList(),
                 NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince
             };
         }
@@ -1201,8 +1264,19 @@ namespace RailRouteAssistantDesktop
         public double? DepartureRemainingSec;  // 当前停站距发车剩余秒数
         public double? CurrentDepartureScheduleDelaySec;  // 当前停站相对计划发车时刻的晚点秒数
         public string StopReasons;
+        public List<ScheduledStopData> ScheduledStops = new();
         public double? NextPrepareSec;  // 下一交路准备剩余秒数（不用于当前停站倒计时）
         public double? NextArrivalSec;  // 距到达剩余秒数
         public double? NotMovingSince;  // 停车时长（秒）
+    }
+
+    public class ScheduledStopData
+    {
+        public string Station;
+        public int Platform;
+        public double? ArrivalTimeSec;
+        public double? DepartureTimeSec;
+        public int StopMinutes;
+        public bool RelativeTimes;
     }
 }

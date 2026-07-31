@@ -133,6 +133,21 @@ namespace RailRouteAssistant
                 sb.Append("\"platform\":").Append(s.NextPlatformNumber).Append(",");
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
                 sb.Append("\"nextStationNonStop\":").Append(s.NextStationNonStop.ToString().ToLower()).Append(",");
+                sb.Append("\"scheduledStops\":[");
+                for (int stopIndex = 0; stopIndex < s.ScheduledStops.Count; stopIndex++)
+                {
+                    if (stopIndex > 0) sb.Append(",");
+                    var stop = s.ScheduledStops[stopIndex];
+                    sb.Append("{");
+                    sb.Append("\"station\":").Append(JsonStr(stop.StationName)).Append(",");
+                    sb.Append("\"platform\":").Append(stop.PlatformNumber).Append(",");
+                    sb.Append("\"arrivalTimeSec\":").Append(stop.ArrivalGameTimeSeconds.HasValue ? stop.ArrivalGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
+                    sb.Append("\"departureTimeSec\":").Append(stop.DepartureGameTimeSeconds.HasValue ? stop.DepartureGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
+                    sb.Append("\"stopMinutes\":").Append(stop.StopDurationMinutes).Append(",");
+                    sb.Append("\"relativeTimes\":").Append(stop.RelativeTimes.ToString().ToLower());
+                    sb.Append("}");
+                }
+                sb.Append("],");
                 sb.Append("\"actualVisitCount\":").Append(s.ActualVisitCount).Append(",");
                 sb.Append("\"scheduledVisitCount\":").Append(s.ScheduledVisitCount).Append(",");
                 sb.Append("\"scheduledVisitIndex\":").Append(s.CurrentScheduledVisitIndex).Append(",");

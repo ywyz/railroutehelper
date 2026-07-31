@@ -212,6 +212,18 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 - 站台冲突/进路相交类告警的车次形如 `G123/G456`，点击时取第一个车次定位
 - 列车列表每秒刷新会保留当前选中行，避免刷新清掉刚定位的车次
 
+### 车次详情弹窗
+
+双击列车列表中的车次，打开只读详情弹窗。弹窗顶部显示车次、始发站和终点站；
+下方表格按游戏 `ScheduledVisits` 顺序显示当前地图内的停车站点：
+
+`序号 | 停车站点 | 站台 | 到站时间 | 发车时间 | 停车间隔`
+
+- `NonStop=true` 的通过站不列入停车站点。
+- 绝对计划时刻显示为 `HH:mm:ss`。
+- 游戏只提供相对时刻时显示为 `+HH:mm:ss`，并在弹窗底部注明。
+- 时刻缺失时显示 `--`；停车间隔优先使用游戏的 `StopDurationMinutes`，缺失时由到发时刻差计算。
+
 ### 窗口置顶
 
 桌面程序默认 `TopMost = true` 浮在游戏窗口上方。为避免被游戏窗口遮挡：
@@ -323,6 +335,16 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
       "routeRemain": 3,
       "platform": 3,
       "nextStation": "南京站",
+      "scheduledStops": [
+        {
+          "station": "南京站",
+          "platform": 3,
+          "arrivalTimeSec": 52200,
+          "departureTimeSec": 52500,
+          "stopMinutes": 5,
+          "relativeTimes": false
+        }
+      ],
       "lastVisitDeparted": false,
       "lastArrivalScheduleDeviationSec": -125,
       "lastDepartureScheduleDelaySec": null,
@@ -351,6 +373,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 |------|------|------|
 | `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
 | `delay` | number | 游戏原始的累计延误值；不用于判断单次发车是否晚点 |
+| `scheduledStops` | array | 当前地图内计划停车表；含站名、站台、到发时刻、停车分钟和相对时刻标志，通过站已排除 |
 | `lastArrivalScheduleDeviationSec` | number \| null | 最近一次实际到站首次观察时固定的“游戏时钟 - 该站计划到达时刻”；负数为早点、正数为晚点 |
 | `lastDepartureScheduleDelaySec` | number \| null | 最近一次实际发车时，首次按“游戏时钟 - 该站计划发车时刻”固定的晚点秒数；供发车播报使用 |
 | `currentDepartureScheduleDelaySec` | number \| null | 当前到站停车相对本站计划发车时刻的晚点秒数；供“即将发车”告警与停站列表使用 |
@@ -452,6 +475,7 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── Program.cs                 # 入口
 ├── GameInstallationManager.cs # 一体包首次安装、Steam 路径发现与自动启动
+├── TrainDetailsForm.cs        # 双击车次后的始发终到与地图内停车表弹窗
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
 ├── TrainInfoService.cs        # 12306 在线 → 路路通 → 静态 12306 快照的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
