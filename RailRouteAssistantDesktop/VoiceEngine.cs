@@ -17,10 +17,12 @@ namespace RailRouteAssistantDesktop
     public class VoiceEngine : IDisposable
     {
         private const string TtsProsodyRate = "+20%";
+        private const string ChineseCulturePrefix = "zh";
         private readonly string _audioDir;
         private readonly BlockingCollection<List<Segment>> _queue = new();
         private readonly Thread _playerThread;
         private readonly SpeechSynthesizer _tts;
+        private readonly bool _hasChineseVoice;
         private bool _disposed;
 
         // 车号字母 → 读音音频文件名（音频库中已有的字母读音 wav）
@@ -41,17 +43,40 @@ namespace RailRouteAssistantDesktop
         {
             _audioDir = audioDir;
             _tts = new SpeechSynthesizer();
-            try
-            {
-                _tts.SelectVoice("Microsoft Huihui");  // 中文女声（Win10/11 自带）
-            }
-            catch { /* 回退默认语音 */ }
+            _hasChineseVoice = TrySelectChineseVoice();
             // 具体播报段通过 SSML 设为 +20%，这里保留默认基准速度。
             _tts.Rate = 0;
             _tts.Volume = 100;
 
             _playerThread = new Thread(PlayerLoop) { IsBackground = true, Name = "VoicePlayer" };
             _playerThread.Start();
+        }
+
+        /// <summary>
+        /// 动态挑选系统中首个可用的中文语音。不硬编码 voice 名字——
+        /// Win10/11 的 Huihui 实际 Name 是 "Microsoft Huihui Desktop"，硬编码
+        /// "Microsoft Huihui" 会让 SelectVoice 抛异常并静默回退，在某些机器上
+        /// 回退成英文 voice 后会把站名读成乱音。这里按 Culture 匹配，找到才返回 true。
+        /// </summary>
+        private bool TrySelectChineseVoice()
+        {
+            try
+            {
+                // GetInstalledVoices 即便系统完全无语音也会返回空集合而非抛错。
+                foreach (var voice in _tts.GetInstalledVoices())
+                {
+                    if (!voice.Enabled) continue;
+                    var info = voice.VoiceInfo;
+                    if (info?.Culture != null &&
+                        info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _tts.SelectVoice(info.Name);
+                        return true;
+                    }
+                }
+            }
+            catch { /* 语音枚举/选择失败：按无中文 TTS 处理 */ }
+            return false;
         }
 
         /// <summary>播报类型</summary>
@@ -352,6 +377,10 @@ namespace RailRouteAssistantDesktop
 
         private void PlayTts(string text)
         {
+            // 没有中文语音时直接跳过——用英文 voice 读中文会得到无法辨认的乱音，
+            // 比静默更糟。预录音频（车号、数字、提示音）不依赖 TTS，仍正常播放。
+            if (!_hasChineseVoice) return;
+
             try
             {
                 // 使用 SSML 精确提高合成语音的语速；先转义站名等外部文本，避免破坏 XML。
