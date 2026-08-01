@@ -22,23 +22,22 @@ namespace RailRouteAssistantDesktop
 
         /// <summary>
         /// 用百度 TTS 合成文本，返回 MP3 音频字节。失败返回 null。
-        /// voiceShortName 参数保留以兼容旧调用签名；百度接口用 spd（语速）控制，
-        /// 这里映射：男声 spd=3，女声 spd=4，实际音色为百度默认女声。
+        /// 百度接口用 spd 控制语速，范围 1（最慢）到 7（最快）。
         /// </summary>
-        public static byte[] Synthesize(string text, string voiceShortName, CancellationToken ct = default)
+        public static byte[] Synthesize(string text, int speed, CancellationToken ct = default)
         {
-            return Task.Run(() => SynthesizeAsync(text, voiceShortName, ct)).GetAwaiter().GetResult();
+            return Task.Run(() => SynthesizeAsync(text, speed, ct)).GetAwaiter().GetResult();
         }
 
-        public static async Task<byte[]> SynthesizeAsync(string text, string voiceShortName, CancellationToken ct = default)
+        public static async Task<byte[]> SynthesizeAsync(string text, int speed, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(text)) return null;
             try
             {
-                // 百度翻译 TTS 公开接口：lan=zh 中文，spd 语速（1-7）。
-                // spd=6 偏快，配合车站广播节奏；voiceShortName 不影响百度接口（单音色），保留参数兼容。
+                // 百度翻译 TTS 公开接口：lan=zh 中文，spd 语速。
+                speed = Math.Max(VoiceEngine.MinimumSpeechRate, Math.Min(VoiceEngine.MaximumSpeechRate, speed));
                 string encoded = HttpUtility.UrlEncode(text);
-                string url = $"https://fanyi.baidu.com/gettts?lan=zh&text={encoded}&spd=6&source=web";
+                string url = $"https://fanyi.baidu.com/gettts?lan=zh&text={encoded}&spd={speed}&source=web";
 
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.Referrer = new Uri("https://fanyi.baidu.com/");
@@ -55,12 +54,5 @@ namespace RailRouteAssistantDesktop
                 return null; // 网络不通/超时，回退本地
             }
         }
-
-        /// <summary>兼容旧调用：百度 TTS 只有一个默认女声，但仍提供选项让用户感知"在线语音"。</summary>
-        public static readonly (string ShortName, string DisplayName, bool Male)[] ChineseVoices =
-        {
-            ("zh-CN-XiaoxiaoNeural", "晓晓（女声）", false),
-            ("zh-CN-YunxiNeural",    "云希（男声）", true),
-        };
     }
 }

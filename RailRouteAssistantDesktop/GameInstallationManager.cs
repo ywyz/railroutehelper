@@ -179,7 +179,7 @@ namespace RailRouteAssistantDesktop
                 File.Exists(Path.Combine(gameDirectory, "BepInEx", "core", "BepInEx.dll")) &&
                 File.Exists(Path.Combine(gameDirectory, "winhttp.dll")) &&
                 File.Exists(Path.Combine(gameDirectory, "doorstop_config.ini"));
-            bool pluginNeedsUpdate = !File.Exists(targetPlugin) || !FilesEqual(sourcePlugin, targetPlugin);
+            bool pluginNeedsUpdate = PluginNeedsUpdate(sourcePlugin, targetPlugin);
             if (hasBepInEx && !pluginNeedsUpdate) return false;
 
             if (!hasBepInEx)
@@ -221,6 +221,31 @@ namespace RailRouteAssistantDesktop
             using var rightStream = File.OpenRead(right);
             byte[] rightHash = sha.ComputeHash(rightStream);
             return leftHash.SequenceEqual(rightHash);
+        }
+
+        /// <summary>
+        /// 桌面端单独发布时，重新编译会改变插件的产品提交哈希，但插件代码和文件版本
+        /// 可能完全没升级。相同或更高文件版本不覆盖，避免为了桌面 UI 更新要求重启游戏；
+        /// 插件功能有变化时必须提升 RailRouteAssistant.csproj 的 Version。
+        /// </summary>
+        private static bool PluginNeedsUpdate(string sourcePlugin, string targetPlugin)
+        {
+            if (!File.Exists(targetPlugin)) return true;
+
+            try
+            {
+                var sourceInfo = FileVersionInfo.GetVersionInfo(sourcePlugin);
+                var targetInfo = FileVersionInfo.GetVersionInfo(targetPlugin);
+                if (Version.TryParse(sourceInfo.FileVersion, out var sourceVersion) &&
+                    Version.TryParse(targetInfo.FileVersion, out var targetVersion) &&
+                    targetVersion >= sourceVersion)
+                {
+                    return false;
+                }
+            }
+            catch { /* 版本信息不可读时回退哈希比较 */ }
+
+            return !FilesEqual(sourcePlugin, targetPlugin);
         }
 
         private static bool RelaunchElevated(string gameDirectory)

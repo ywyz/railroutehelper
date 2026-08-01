@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>RailRouteAssistantDesktop</AssemblyName>
     <RootNamespace>RailRouteAssistantDesktop</RootNamespace>
-    <Version>2.6.2</Version>
+    <Version>2.6.3</Version>
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 发布为单文件时也必须把两级离线车次表带入程序，换电脑后才能继续降级查询。 -->
@@ -17,6 +17,10 @@
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\RailRouteHelper.Core\RailRouteHelper.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
