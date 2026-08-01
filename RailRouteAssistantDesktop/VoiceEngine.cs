@@ -2,10 +2,18 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security;
 using System.Speech.Synthesis;
 using System.Threading;
+using System.Threading.Tasks;
 using NAudio.Wave;
+using Windows.Media.SpeechSynthesis;
+// 两个命名空间都有 SpeechSynthesizer/VoiceGender，用别名消除歧义。
+// OneCore 用类型全名访问；这里别名只服务于 System.Speech 的简写。
+using SapiSpeechSynthesizer = System.Speech.Synthesis.SpeechSynthesizer;
+using SapiVoiceGender = System.Speech.Synthesis.VoiceGender;
 
 namespace RailRouteAssistantDesktop
 {
@@ -21,7 +29,9 @@ namespace RailRouteAssistantDesktop
         private readonly string _audioDir;
         private readonly BlockingCollection<List<Segment>> _queue = new();
         private readonly Thread _playerThread;
-        private readonly SpeechSynthesizer _tts;
+        private readonly System.Speech.Synthesis.SpeechSynthesizer _tts;           // System.Speech（SAPI5）后端
+        private readonly Windows.Media.SpeechSynthesis.SpeechSynthesizer _oneCore;  // OneCore 后端
+        private readonly bool _oneCoreAvailable;
         private bool _hasChineseVoice;
         private VoiceSourceMode _mode = VoiceSourceMode.PreRecorded;
         private bool _disposed;
@@ -49,14 +59,35 @@ namespace RailRouteAssistantDesktop
         public VoiceEngine(string audioDir)
         {
             _audioDir = audioDir;
-            _tts = new SpeechSynthesizer();
-            _hasChineseVoice = TrySelectChineseVoice();
+                _tts = new SapiSpeechSynthesizer();
+            // 优先尝试 OneCore 后端：它能列出本机所有 OneCore voice（含 Kangkang 男声、
+            // Yaoyao 等），System.Speech（SAPI5）只能看到 SAPI5 注册的 voice，通常只有 Huihui。
+            // OneCore 在 Win10 1809+ 可用；不可用时回退 System.Speech。
+            _oneCore = TryCreateOneCore();
+            _oneCoreAvailable = _oneCore != null;
+            _hasChineseVoice = _oneCoreAvailable ? HasOneCoreChineseVoice() : TrySelectChineseVoice();
             // 具体播报段通过 SSML 设为 +20%，这里保留默认基准速度。
             _tts.Rate = 0;
             _tts.Volume = 100;
 
             _playerThread = new Thread(PlayerLoop) { IsBackground = true, Name = "VoicePlayer" };
             _playerThread.Start();
+        }
+
+        private Windows.Media.SpeechSynthesis.SpeechSynthesizer TryCreateOneCore()
+        {
+            try { return new Windows.Media.SpeechSynthesis.SpeechSynthesizer(); }
+            catch { /* OneCore 不可用（旧系统或精简版）：回退 System.Speech */ return null; }
+        }
+
+        private bool HasOneCoreChineseVoice()
+        {
+            try
+            {
+                return Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
+                    .Any(v => v.Language.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase));
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -97,7 +128,8 @@ namespace RailRouteAssistantDesktop
 
         /// <summary>
         /// 枚举系统中所有可用的中文 TTS voice，并附带预录音源选项（当 audioDir 存在时）。
-        /// 不持有 VoiceEngine 实例也能调用——供菜单构建使用。
+        /// 优先用 OneCore 枚举（能看到 Kangkang 男声等 OneCore voice），OneCore 不可用
+        /// 时回退 System.Speech。不持有 VoiceEngine 实例也能调用——供菜单构建使用。
         /// </summary>
         public static List<VoiceOption> GetAvailableVoices(string audioDir)
         {
@@ -111,33 +143,62 @@ namespace RailRouteAssistantDesktop
                     IsPreRecorded = true
                 });
             }
+            // OneCore 优先
             try
             {
-                using var probe = new SpeechSynthesizer();
-                foreach (var voice in probe.GetInstalledVoices())
+                foreach (var v in Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices)
                 {
-                    if (!voice.Enabled) continue;
-                    var info = voice.VoiceInfo;
-                    if (info?.Culture == null) continue;
-                    if (!info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
+                    if (v?.Language == null) continue;
+                    if (!v.Language.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
                         continue;
-                    string gender = info.Gender switch
-                    {
-                        VoiceGender.Male => "男声",
-                        VoiceGender.Female => "女声",
-                        _ => null
-                    };
-                    string display = gender != null ? $"{info.Name}（{gender}）" : info.Name;
+                    string gender = v.Gender switch
+                        {
+                            Windows.Media.SpeechSynthesis.VoiceGender.Male => "男声",
+                            Windows.Media.SpeechSynthesis.VoiceGender.Female => "女声",
+                            _ => null
+                        };
+                    string display = gender != null ? $"{v.DisplayName}（{gender}）" : v.DisplayName;
                     list.Add(new VoiceOption
                     {
-                        Key = info.Name,
+                        Key = "onecore:" + v.Id,
                         DisplayName = "TTS · " + display,
                         IsPreRecorded = false,
-                        VoiceName = info.Name
+                        VoiceName = v.Id
                     });
                 }
             }
-            catch { /* 枚举失败：只返回预录选项 */ }
+            catch { /* OneCore 不可用：回退 System.Speech */ }
+            // System.Speech 回退
+            if (list.Count == 1)
+            {
+                try
+                {
+                    using var probe = new SapiSpeechSynthesizer();
+                        foreach (var voice in probe.GetInstalledVoices())
+                        {
+                            if (!voice.Enabled) continue;
+                            var info = voice.VoiceInfo;
+                            if (info?.Culture == null) continue;
+                            if (!info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            string gender = info.Gender switch
+                            {
+                                SapiVoiceGender.Male => "男声",
+                                SapiVoiceGender.Female => "女声",
+                                _ => null
+                            };
+                        string display = gender != null ? $"{info.Name}（{gender}）" : info.Name;
+                        list.Add(new VoiceOption
+                        {
+                            Key = "sapi5:" + info.Name,
+                            DisplayName = "TTS · " + display,
+                            IsPreRecorded = false,
+                            VoiceName = info.Name
+                        });
+                    }
+                }
+                catch { /* 枚举失败：只返回预录选项 */ }
+            }
             return list;
         }
 
@@ -152,6 +213,19 @@ namespace RailRouteAssistantDesktop
             }
             try
             {
+                if (option.Key.StartsWith("onecore:") && _oneCoreAvailable)
+                {
+                    var match = Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
+                        .FirstOrDefault(v => v.Id == option.VoiceName);
+                    if (match != null)
+                    {
+                        _oneCore.Voice = match;
+                        _hasChineseVoice = true;
+                        _mode = VoiceSourceMode.TtsOnly;
+                        return;
+                    }
+                }
+                // SAPI5 回退
                 _tts.SelectVoice(option.VoiceName);
                 _hasChineseVoice = true;
                 _mode = VoiceSourceMode.TtsOnly;
@@ -486,6 +560,13 @@ namespace RailRouteAssistantDesktop
             // 比静默更糟。预录音频（车号、数字、提示音）不依赖 TTS，仍正常播放。
             if (!_hasChineseVoice) return;
 
+            // 优先用 OneCore 合成：能看到 Kangkang/Yaoyao 等 OneCore voice
+            if (_oneCoreAvailable && _mode == VoiceSourceMode.TtsOnly)
+            {
+                if (TryPlayOneCore(text)) return;
+                // OneCore 合成失败：回退 System.Speech
+            }
+
             try
             {
                 // 使用 SSML 精确提高合成语音的语速；先转义站名等外部文本，避免破坏 XML。
@@ -507,11 +588,45 @@ namespace RailRouteAssistantDesktop
             }
         }
 
+        /// <summary>
+        /// 用 OneCore 合成 SSML 并用 NAudio 播放。OneCore 输出 WAV 流，
+        /// 转入 MemoryStream 后用 WaveFileReader 解码播放。在后台线程同步阻塞直到播完。
+        /// </summary>
+        private bool TryPlayOneCore(string text)
+        {
+            try
+            {
+                string escaped = SecurityElement.Escape(text) ?? string.Empty;
+                string ssml =
+                    "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
+                    "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>";
+                var task = _oneCore.SynthesizeSsmlToStreamAsync(ssml).AsTask();
+                task.Wait();
+                using var winRtStream = task.Result;
+                using var dotnetStream = winRtStream.AsStreamForRead();
+                using var ms = new MemoryStream();
+                dotnetStream.CopyTo(ms);
+                ms.Position = 0;
+                using var reader = new WaveFileReader(ms);
+                using var waveOut = new WaveOutEvent();
+                waveOut.Init(reader);
+                waveOut.Play();
+                while (waveOut.PlaybackState == PlaybackState.Playing) Thread.Sleep(50);
+                return true;
+            }
+            catch
+            {
+                // OneCore 合成/播放失败（voice 不支持 SSML、音频设备问题等）：回退 System.Speech
+                return false;
+            }
+        }
+
         public void Dispose()
         {
             _disposed = true;
             _queue.CompleteAdding();
             try { _tts?.Dispose(); } catch { }
+            try { _oneCore?.Dispose(); } catch { }
         }
 
         private enum SegKind { Audio, Tts }
