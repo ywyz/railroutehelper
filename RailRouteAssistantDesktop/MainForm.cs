@@ -394,9 +394,9 @@ namespace RailRouteAssistantDesktop
         private void UpdateVoiceMenuChecks()
         {
             if (_voiceMenu == null) return;
-            foreach (ToolStripMenuItem mi in _voiceMenu.DropDownItems)
+            foreach (var item in _voiceMenu.DropDownItems)
             {
-                if (mi.Tag is VoiceEngine.VoiceOption opt)
+                if (item is ToolStripMenuItem mi && mi.Tag is VoiceEngine.VoiceOption opt)
                     mi.Checked = string.Equals(opt.Key, _selectedVoiceKey, StringComparison.Ordinal);
             }
         }
