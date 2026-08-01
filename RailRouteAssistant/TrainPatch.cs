@@ -1060,9 +1060,17 @@ namespace RailRouteAssistant
                 // 列车进入/离开地图的计划时刻：取首个访问的 From（到达）和末个访问的 To（发车）。
                 // 含通过站——列车可能从通过站进入或离开地图。
                 if (firstVisit != null)
+                {
                     snap.MapEntryGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(firstVisit));
+                    ReadStationVisit(firstVisit, out var entryStation, out _, out _, out _, out _, out _, out _, out _);
+                    snap.MapEntryStationName = entryStation ?? "";
+                }
                 if (lastVisit != null)
+                {
                     snap.MapExitGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(lastVisit));
+                    ReadStationVisit(lastVisit, out var exitStation, out _, out _, out _, out _, out _, out _, out _);
+                    snap.MapExitStationName = exitStation ?? "";
+                }
             }
             catch (Exception ex)
             {

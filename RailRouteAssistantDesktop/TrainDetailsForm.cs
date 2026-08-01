@@ -20,7 +20,9 @@ namespace RailRouteAssistantDesktop
             IReadOnlyList<ScheduledStopData> stops,
             OnlineTrainDetails onlineDetails,
             double? mapEntryTimeSec,
-            double? mapExitTimeSec)
+            double? mapExitTimeSec,
+            string mapEntryStation,
+            string mapExitStation)
         {
             Text = $"{trainCode} 车次详情";
             Width = 760;
@@ -72,7 +74,7 @@ namespace RailRouteAssistantDesktop
             {
                 Dock = DockStyle.Top,
                 Height = 24,
-                Text = $"进入地图：{FormatMapTime(mapEntryTimeSec)}    离开地图：{FormatMapTime(mapExitTimeSec)}",
+                Text = $"进入地图：{DisplayStation(mapEntryStation)} {FormatMapTime(mapEntryTimeSec)}    离开地图：{DisplayStation(mapExitStation)} {FormatMapTime(mapExitTimeSec)}",
                 ForeColor = Color.Khaki,
                 Font = new Font("Microsoft YaHei UI", 9F),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -357,6 +359,9 @@ namespace RailRouteAssistantDesktop
 
         private static string DisplayText(string value) =>
             string.IsNullOrWhiteSpace(value) ? "未知" : value;
+
+        private static string DisplayStation(string value) =>
+            string.IsNullOrWhiteSpace(value) ? "" : StripEnglishPrefix(value);
 
         private static string StripEnglishPrefix(string station)
         {

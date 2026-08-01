@@ -584,7 +584,9 @@ namespace RailRouteAssistantDesktop
                             SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
                             FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1,
                             MapEntryTimeSec = t.TryGetProperty("mapEntryTimeSec", out var me) && me.ValueKind == JsonValueKind.Number ? me.GetDouble() : null,
-                            MapExitTimeSec = t.TryGetProperty("mapExitTimeSec", out var mx) && mx.ValueKind == JsonValueKind.Number ? mx.GetDouble() : null
+                            MapExitTimeSec = t.TryGetProperty("mapExitTimeSec", out var mx) && mx.ValueKind == JsonValueKind.Number ? mx.GetDouble() : null,
+                            MapEntryStation = t.TryGetProperty("mapEntryStation", out var mes) && mes.ValueKind == JsonValueKind.String ? mes.GetString() ?? "" : "",
+                            MapExitStation = t.TryGetProperty("mapExitStation", out var mxs) && mxs.ValueKind == JsonValueKind.String ? mxs.GetString() ?? "" : ""
                         };
 
                         if (t.TryGetProperty("scheduledStops", out var stopsEl) && stopsEl.ValueKind == JsonValueKind.Array)
@@ -658,17 +660,36 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>
-        /// 列车排序：在线运行 > 在线停车 > 等待入图 > 已完成
+        /// 列车排序：故障 > 在线停车（按剩余发车时间升序）> 运行中 > 等待入图 > 已完成
         /// </summary>
         private static int TrainSortPriority(TrainData t)
         {
             if (t.BrokenDown) return 0;          // 故障最优先
-            if (t.OnBoard && t.Speed > 0) return 1;  // 运行中
-            if (t.OnBoard && t.Speed == 0) return 2;  // 在线停车
+            if (t.OnBoard && t.Speed == 0) return 1;  // 在线停车（停站）
+            if (t.OnBoard && t.Speed > 0) return 2;   // 运行中
             if (t.OnBoard) return 3;              // 在线其他
             if (t.Waiting) return 4;              // 等待入图
             if (t.Finished) return 6;             // 已完成
             return 5;                              // 其他
+        }
+
+        /// <summary>
+        /// 列车完整排序比较：先按 TrainSortPriority 分组，停站组内按剩余发车时间升序。
+        /// </summary>
+        private static int CompareTrains(TrainData a, TrainData b)
+        {
+            int pa = TrainSortPriority(a);
+            int pb = TrainSortPriority(b);
+            if (pa != pb) return pa.CompareTo(pb);
+            // 同组内：停站组（优先级 1）按剩余发车时间从少到多排序
+            if (pa == 1)
+            {
+                double da = a.DepartureRemainingSec ?? double.MaxValue;
+                double db = b.DepartureRemainingSec ?? double.MaxValue;
+                return da.CompareTo(db);
+            }
+            // 其他组按车号稳定排序
+            return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
         }
 
         private void UpdateUI()
@@ -730,7 +751,7 @@ namespace RailRouteAssistantDesktop
             if (_trainList == null) return;
 
             // 列车列表 - 排序后重建（顺序会变化）；保留选中车号
-            _trains.Sort((a, b) => TrainSortPriority(a).CompareTo(TrainSortPriority(b)));
+            _trains.Sort(CompareTrains);
             string query = _trainSearchBox?.Text.Trim() ?? "";
 
             // 记录当前选中的车号，重建后恢复
@@ -847,7 +868,9 @@ namespace RailRouteAssistantDesktop
                 train.ScheduledStops,
                 onlineDetails,
                 train.MapEntryTimeSec,
-                train.MapExitTimeSec);
+                train.MapExitTimeSec,
+                train.MapEntryStation,
+                train.MapExitStation);
             _modalDialogShowing = true;
             try { dialog.ShowDialog(this); }
             finally { _modalDialogShowing = false; }
@@ -1228,7 +1251,8 @@ namespace RailRouteAssistantDesktop
                     RelativeTimes = stop.RelativeTimes
                 }).ToList(),
                 NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince,
-                MapEntryTimeSec = t.MapEntryTimeSec, MapExitTimeSec = t.MapExitTimeSec
+                MapEntryTimeSec = t.MapEntryTimeSec, MapExitTimeSec = t.MapExitTimeSec,
+                MapEntryStation = t.MapEntryStation, MapExitStation = t.MapExitStation
             };
         }
 
@@ -1446,6 +1470,8 @@ namespace RailRouteAssistantDesktop
         public double? NotMovingSince;  // 停车时长（秒）
         public double? MapEntryTimeSec;  // 列车进入地图的计划时刻（游戏内绝对秒数）
         public double? MapExitTimeSec;   // 列车离开地图的计划时刻（游戏内绝对秒数）
+        public string MapEntryStation;   // 列车进入地图的站名
+        public string MapExitStation;    // 列车离开地图的站名（游戏地图内终点站）
     }
 
     public class ScheduledStopData

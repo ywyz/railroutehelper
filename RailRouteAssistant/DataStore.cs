@@ -79,6 +79,9 @@ namespace RailRouteAssistant
         // 取自 ScheduledVisits 中第一个和最后一个访问的 From/To，含通过站。
         public double? MapEntryGameTimeSeconds;
         public double? MapExitGameTimeSeconds;
+        // 列车进入/离开当前游戏地图的站名（取自首个/末个 ScheduledVisit 的站名，含通过站）。
+        public string MapEntryStationName;
+        public string MapExitStationName;
 
         // 当前计划停站。仅在列车真正停站时使用；To 为游戏内绝对发车时刻。
         public string CurrentStationName;

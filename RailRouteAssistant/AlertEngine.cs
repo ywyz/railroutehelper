@@ -369,14 +369,17 @@ namespace RailRouteAssistant
             arriveIn = -1;
             departIn = -1;
 
-            // 到达剩余秒数（已由采集线程换算好）
+            // 到达剩余秒数来自 ContractLeg.NextArrival，是绝对时刻换算的可靠值
             if (!train.NextArrivalTimeTotalSeconds.HasValue)
                 return false;
             arriveIn = train.NextArrivalTimeTotalSeconds.Value;
             if (arriveIn < 0) arriveIn = 0;
 
-            // 从计划停站表中查找下一站的发车绝对时刻
-            var stop = train.ScheduledStops.FirstOrDefault(s => s.StationName == train.NextStationName);
+            // 从计划停站表中查找下一站的发车绝对时刻。
+            // 注意：ScheduledStops 中 RelativeTimes=true 的项其 From/To 是相对时刻，
+            // 不能与游戏时钟 nowSec 比较；只有 RelativeTimes=false 的绝对时刻才可用。
+            var stop = train.ScheduledStops.FirstOrDefault(
+                s => s.StationName == train.NextStationName && !s.RelativeTimes);
             if (stop != null && stop.DepartureGameTimeSeconds.HasValue)
             {
                 departIn = stop.DepartureGameTimeSeconds.Value - nowSec;
@@ -391,10 +394,18 @@ namespace RailRouteAssistant
                 return true;
             }
 
-            // 有停站时长但无绝对发车时刻
+            // 有停站时长但无绝对发车时刻：用停站时长估算占用窗
             if (stop != null && stop.StopDurationMinutes > 0)
             {
                 departIn = arriveIn + stop.StopDurationMinutes * 60.0;
+                return true;
+            }
+            // 相对时刻表也有停站时长，可作为估算
+            var relStop = train.ScheduledStops.FirstOrDefault(
+                s => s.StationName == train.NextStationName && s.StopDurationMinutes > 0);
+            if (relStop != null)
+            {
+                departIn = arriveIn + relStop.StopDurationMinutes * 60.0;
                 return true;
             }
 
