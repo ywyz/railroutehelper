@@ -36,6 +36,7 @@ namespace RailRouteAssistantDesktop
         private ToolStripMenuItem _voiceMenu;           // 语音包切换菜单
         private List<VoiceEngine.VoiceOption> _voiceOptions = new();
         private string _selectedVoiceKey;               // 当前选中的语音来源 Key（持久化用）
+        private bool _modalDialogShowing;               // 模态窗体显示中，暂停 TopMost 维持
         // 状态追踪：游戏列车 ID（无 ID 时回退原始车号）→ 上一次状态。用于检测状态变化触发播报。
         private readonly Dictionary<string, TrainPrevState> _prevStates = new();
         // 防重复：(车号|播报类型) → 上次播报的 UTC 时间
@@ -312,10 +313,10 @@ namespace RailRouteAssistantDesktop
             // 失去焦点时恢复置顶（避免被游戏窗口盖住）
             Deactivate += (s, e) =>
             {
-                if (IsDisposed) return;
+                if (IsDisposed || _modalDialogShowing) return;
                 BeginInvoke(new Action(() =>
                 {
-                    if (IsDisposed) return;
+                    if (IsDisposed || _modalDialogShowing) return;
                     TopMost = false;
                     TopMost = true;
                 }));
@@ -349,6 +350,9 @@ namespace RailRouteAssistantDesktop
             _voiceOptions = VoiceEngine.GetAvailableVoices(audioDir);
             PopulateVoiceMenu();
             RestoreVoiceSelection();
+            // 所有 Dock 控件已添加后，把菜单栏送到底层 z-order——
+            // dock 布局从最高索引开始，MenuStrip 会最先占据顶部边缘，不被状态栏挤下去。
+            MainMenuStrip?.SendToBack();
         }
 
         private void PopulateVoiceMenu()
@@ -369,11 +373,19 @@ namespace RailRouteAssistantDesktop
             }
             _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
             var installItem = _voiceMenu.DropDownItems.Add("安装更多语音…");
-            installItem.Click += (s, e) => MessageBox.Show(
-                "Windows 设置 → 时间和语言 → 语音 → 添加语音，选中文（简体）。\n" +
-                "Microsoft Kangkang 为男声，Huihui / Yaoyao 为女声。\n" +
-                "安装后重启桌面助手，菜单里就会出现新语音。",
-                "安装更多语音", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            installItem.Click += (s, e) =>
+            {
+                _modalDialogShowing = true;
+                try
+                {
+                    MessageBox.Show(
+                        "Windows 设置 → 时间和语言 → 语音 → 添加语音，选中文（简体）。\n" +
+                        "Microsoft Kangkang 为男声，Huihui / Yaoyao 为女声。\n" +
+                        "安装后重启桌面助手，菜单里就会出现新语音。",
+                        "安装更多语音", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                finally { _modalDialogShowing = false; }
+            };
             UpdateVoiceMenuChecks();
         }
 
@@ -381,8 +393,10 @@ namespace RailRouteAssistantDesktop
         {
             if (_voice == null)
             {
-                MessageBox.Show("语音引擎未初始化，无法切换。", "语音切换",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _modalDialogShowing = true;
+                try { MessageBox.Show("语音引擎未初始化，无法切换。", "语音切换",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                finally { _modalDialogShowing = false; }
                 return;
             }
             _voice.ApplyVoice(opt);
@@ -604,8 +618,9 @@ namespace RailRouteAssistantDesktop
 
                 UpdateUI();
 
-                // 周期性维持置顶：游戏窗口偶尔会盖住本窗口，每秒检查一次
-                if (!TopMost) TopMost = true;
+                // 周期性维持置顶：游戏窗口偶尔会盖住本窗口，每秒检查一次。
+                // 模态窗体显示时暂停，避免抢走子窗体焦点导致按钮无法点击。
+                if (!_modalDialogShowing && !TopMost) TopMost = true;
             }
             catch (HttpRequestException)
             {
@@ -811,7 +826,9 @@ namespace RailRouteAssistantDesktop
                 onlineDetails,
                 train.MapEntryTimeSec,
                 train.MapExitTimeSec);
-            dialog.ShowDialog(this);
+            _modalDialogShowing = true;
+            try { dialog.ShowDialog(this); }
+            finally { _modalDialogShowing = false; }
         }
 
         /// <summary>

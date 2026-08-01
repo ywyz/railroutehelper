@@ -34,6 +34,8 @@ namespace RailRouteAssistantDesktop
         private readonly bool _oneCoreAvailable;
         private bool _hasChineseVoice;
         private VoiceSourceMode _mode = VoiceSourceMode.PreRecorded;
+        private string _edgeVoiceShortName;  // Edge-TTS 选中时非 null
+        private bool _onlineTtsEnabled = true;  // 在线 TTS（百度）默认开启，启动时探测可达性
         private bool _disposed;
 
         /// <summary>语音来源模式：预录音频拼接 / 纯 TTS 合成。</summary>
@@ -65,7 +67,13 @@ namespace RailRouteAssistantDesktop
             // OneCore 在 Win10 1809+ 可用；不可用时回退 System.Speech。
             _oneCore = TryCreateOneCore();
             _oneCoreAvailable = _oneCore != null;
-            _hasChineseVoice = _oneCoreAvailable ? HasOneCoreChineseVoice() : TrySelectChineseVoice();
+            // OneCore 和 System.Speech 都尝试选中中文 voice：OneCore 用于合成（能看到 Kangkank 等），
+                // System.Speech 作为 OneCore 不可用/失败时的回退。用 | 不短路，确保两者都执行。
+                bool oneCoreZh = _oneCoreAvailable && HasOneCoreChineseVoice();
+                bool sapiZh = TrySelectChineseVoice();
+                _hasChineseVoice = oneCoreZh | sapiZh;
+            // 探测在线 TTS（百度）可达性：不通则关闭，避免每段播报都超时拖慢。
+            _onlineTtsEnabled = ProbeOnlineTts();
             // 具体播报段通过 SSML 设为 +20%，这里保留默认基准速度。
             _tts.Rate = 0;
             _tts.Volume = 100;
@@ -143,6 +151,17 @@ namespace RailRouteAssistantDesktop
                     IsPreRecorded = true
                 });
             }
+            // Edge-TTS 在线声色（网吧/精简系统也能用，只要有网）
+            foreach (var (shortName, display, male) in EdgeTtsClient.ChineseVoices)
+            {
+                list.Add(new VoiceOption
+                {
+                    Key = "edge:" + shortName,
+                    DisplayName = "在线 · " + display,
+                    IsPreRecorded = false,
+                    VoiceName = shortName
+                });
+            }
             // OneCore 优先
             try
             {
@@ -209,10 +228,21 @@ namespace RailRouteAssistantDesktop
             if (option.IsPreRecorded)
             {
                 _mode = VoiceSourceMode.PreRecorded;
+                _edgeVoiceShortName = null;
                 return;
             }
             try
             {
+                if (option.Key.StartsWith("edge:"))
+                {
+                    // Edge-TTS：不需要本地 voice，只要有网即可
+                    _edgeVoiceShortName = option.VoiceName;
+                    _hasChineseVoice = true;
+                    _mode = VoiceSourceMode.TtsOnly;
+                    return;
+                }
+                _edgeVoiceShortName = null;
+
                 if (option.Key.StartsWith("onecore:") && _oneCoreAvailable)
                 {
                     var match = Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
@@ -558,34 +588,70 @@ namespace RailRouteAssistantDesktop
         {
             // 没有中文语音时直接跳过——用英文 voice 读中文会得到无法辨认的乱音，
             // 比静默更糟。预录音频（车号、数字、提示音）不依赖 TTS，仍正常播放。
-            if (!_hasChineseVoice) return;
-
-            // 优先用 OneCore 合成：能看到 Kangkang/Yaoyao 等 OneCore voice
-            if (_oneCoreAvailable && _mode == VoiceSourceMode.TtsOnly)
+            // 在线 TTS 可用时不受此限制（百度接口本身是中文 voice）。
+            if (!_hasChineseVoice && string.IsNullOrEmpty(_edgeVoiceShortName) && !_onlineTtsEnabled)
             {
-                if (TryPlayOneCore(text)) return;
-                // OneCore 合成失败：回退 System.Speech
+                return;
             }
 
+            // 在线百度 TTS 优先：网吧/精简系统本地 TTS 常不可用，在线合成质量高且国内可达。
+            // 无论预录模式还是纯 TTS 模式，TTS 段（站名、句式）都优先走在线——
+            // 预录模式仍保留预录音频（车号、数字、提示音）的拼接，只替换 TTS 段。
+            if (_onlineTtsEnabled)
+            {
+                if (TryPlayEdge(text)) return;
+            }
+
+            // OneCore 次之
+            if (_oneCoreAvailable)
+            {
+                if (TryPlayOneCore(text)) return;
+            }
+
+            // System.Speech 兜底
             try
             {
-                // 使用 SSML 精确提高合成语音的语速；先转义站名等外部文本，避免破坏 XML。
                 string escaped = SecurityElement.Escape(text) ?? string.Empty;
                 _tts.SpeakSsml(
                     "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
                     "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>");
+                return;
             }
             catch
             {
-                // 少数系统语音可能不支持 SSML；仍以较快的普通语速作为兼容回退。
-                try
-                {
-                    _tts.Rate = 2;
-                    _tts.Speak(text);
-                    _tts.Rate = 0;
-                }
-                catch { /* TTS 不可用时静默 */ }
+                // SSML 不支持时回退普通播报
             }
+            try { _tts.Rate = 2; _tts.Speak(text); _tts.Rate = 0; return; }
+            catch { /* TTS 不可用时静默 */ }
+        }
+
+        /// <summary>启动时探测百度 TTS 是否可达：用短词合成一次，成功则启用在线 TTS。</summary>
+        private bool ProbeOnlineTts()
+        {
+            try
+            {
+                byte[] data = EdgeTtsClient.Synthesize("测试", null);
+                return data != null && data.Length > 100;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>用百度 TTS 合成并用 NAudio 播放 MP3。</summary>
+        private bool TryPlayEdge(string text)
+        {
+            try
+            {
+                byte[] mp3 = EdgeTtsClient.Synthesize(text, _edgeVoiceShortName);
+                if (mp3 == null || mp3.Length == 0) return false;
+                using var ms = new MemoryStream(mp3);
+                using var reader = new Mp3FileReader(ms);
+                using var waveOut = new WaveOutEvent();
+                waveOut.Init(reader);
+                waveOut.Play();
+                while (waveOut.PlaybackState == PlaybackState.Playing) Thread.Sleep(50);
+                return true;
+            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -602,10 +668,12 @@ namespace RailRouteAssistantDesktop
                     "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>";
                 var task = _oneCore.SynthesizeSsmlToStreamAsync(ssml).AsTask();
                 task.Wait();
+                if (task.IsFaulted) return false;
                 using var winRtStream = task.Result;
                 using var dotnetStream = winRtStream.AsStreamForRead();
                 using var ms = new MemoryStream();
                 dotnetStream.CopyTo(ms);
+                if (ms.Length == 0) return false;
                 ms.Position = 0;
                 using var reader = new WaveFileReader(ms);
                 using var waveOut = new WaveOutEvent();

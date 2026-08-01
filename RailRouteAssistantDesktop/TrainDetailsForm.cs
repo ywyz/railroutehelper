@@ -136,11 +136,12 @@ namespace RailRouteAssistantDesktop
                 Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right
             };
 
-            // 先添加 note（不参与 dock），再添加按钮（Right dock）。
-            // dock 布局只处理按钮，note 由 Anchor 定位，三者互不遮盖。
-            footer.Controls.Add(note);
+            // 先添加按钮（Dock=Right），最后添加 note（Anchor）。
+            // WinForms z-order：Controls[0] 在最顶层。note 最后添加→索引最大→z-order 底层，
+            // 不会遮盖按钮的点击；按钮 dock=right 仍按规则从高索引开始布局。
             footer.Controls.Add(closeButton);
             footer.Controls.Add(toggleButton);
+            footer.Controls.Add(note);
             footer.Resize += (s, e) =>
             {
                 // 按钮总宽 = 148 + 82 = 230，加上间距和 padding 后 note 右边界不超过此值

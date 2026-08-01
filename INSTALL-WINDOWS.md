@@ -1,8 +1,8 @@
 # Windows 一体包安装说明
 
 1. 解压 `RailRouteAssistant-Windows-x64.zip`，不要直接在压缩包内运行程序。
-2. 双击 `RailRouteAssistantDesktop.exe`。标题栏会显示当前版本号；v2.5.1 的标题应为
-   `Rail Route 调度助手 v2.5.1`。如果没有版本号或版本更旧，请关闭程序并确认
+2. 双击 `RailRouteAssistantDesktop.exe`。标题栏会显示当前版本号；v2.6.0 的标题应为
+   `Rail Route 调度助手 v2.6.0`。如果没有版本号或版本更旧，请关闭程序并确认
    启动的是刚解压的 EXE，而不是此前目录中的旧副本。
 3. 程序会自动查找 Steam 中的 Rail Route；未找到时，请选择包含
    `Rail Route.exe` 的游戏安装目录。
