@@ -724,7 +724,7 @@ namespace RailRouteAssistantDesktop
             RefreshTrainList();
         }
 
-        /// <summary>按搜索框筛选并重建列车列表，同时保留仍可见的选中车号。</summary>
+        /// <summary>按搜索框筛选并重建列车列表，同时保留仍可见的选中车号和滚动位置。</summary>
         private void RefreshTrainList()
         {
             if (_trainList == null) return;
@@ -737,6 +737,14 @@ namespace RailRouteAssistantDesktop
             _selectedTrainNames.Clear();
             foreach (ListViewItem sel in _trainList.SelectedItems)
                 if (!string.IsNullOrEmpty(sel.Text)) _selectedTrainNames.Add(sel.Text);
+
+            // 保存当前滚动位置（顶部可见项的车号），重建后恢复
+            string topTrainName = null;
+            if (_trainList.Items.Count > 0)
+            {
+                try { topTrainName = _trainList.TopItem?.Text; }
+                catch { /* TopItem 在某些状态下可能抛异常，忽略 */ }
+            }
 
             _trainList.BeginUpdate();
             _trainList.Items.Clear();
@@ -754,6 +762,20 @@ namespace RailRouteAssistantDesktop
                 _trainList.Items.Add(item);
             }
             _trainList.EndUpdate();
+
+            // 恢复滚动位置，避免每次刷新都跳回顶部
+            if (!string.IsNullOrEmpty(topTrainName))
+            {
+                for (int i = 0; i < _trainList.Items.Count; i++)
+                {
+                    if (_trainList.Items[i].Text == topTrainName)
+                    {
+                        try { _trainList.TopItem = _trainList.Items[i]; }
+                        catch { }
+                        break;
+                    }
+                }
+            }
         }
 
         private ListViewItem CreateTrainItem(TrainData t)

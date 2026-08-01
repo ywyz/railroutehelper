@@ -150,16 +150,15 @@ namespace RailRouteAssistant
                 }
                 else if (!isStationStop && snap.NotMovingDuration.HasValue)
                 {
-                    // 其他非到站停车 - 停车超时告警（停车时长已由采集线程用游戏时间差值算出）
+                    // 其他非到站停车 - 只有信号停车（Semaphore）才告警，其余原因视为误报
                     var stoppedSec = snap.NotMovingDuration.Value;
-                    if (stoppedSec > 10)
+                    if (stoppedSec > 10 && stoppedForSemaphore)
                     {
-                        var reason = !string.IsNullOrEmpty(snap.StopReasons) ? snap.StopReasons : "未知";
                         alerts.Add(new AlertInfo
                         {
-                            Level = "warning",
+                            Level = "critical",
                             TrainName = snap.TrainName,
-                            Message = $"线路停车{FormatStoppedDuration(stoppedSec)}（{reason}）{nextStation}",
+                            Message = $"下一信号未开放，列车正在减速/停车{nextStation}",
                             TimestampMs = NowMs()
                         });
                     }
@@ -281,14 +280,37 @@ namespace RailRouteAssistant
                     }
                     else if (aRunning && bRunning)
                     {
-                        // 两列都在运行中前往同一站台：无法精确判断（停车时长未知），保守报警告
-                        alerts.Add(new AlertInfo
+                        // 两列都在运行中前往同一站台：用计划时刻表判断到达/发车时间是否重叠
+                        var nowSec = DataStore.GetGameTimeSeconds();
+                        if (nowSec.HasValue &&
+                            TryGetRunningTrainOccupancy(a, nowSec.Value, out var arrA, out var depA) &&
+                            TryGetRunningTrainOccupancy(b, nowSec.Value, out var arrB, out var depB))
                         {
-                            Level = "warning",
-                            TrainName = $"{a.TrainName}/{b.TrainName}",
-                            Message = $"站台可能冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台",
-                            TimestampMs = NowMs()
-                        });
+                            // 两个占用窗 [arrA, depA] 和 [arrB, depB] 是否重叠
+                            const double ClearMargin = 10.0;
+                            if (arrA < depB + ClearMargin && arrB < depA + ClearMargin)
+                            {
+                                alerts.Add(new AlertInfo
+                                {
+                                    Level = "critical",
+                                    TrainName = $"{a.TrainName}/{b.TrainName}",
+                                    Message = $"站台冲突：{a.TrainName}{FormatRelSec(arrA)}到{FormatRelSec(depA)}发，{b.TrainName}{FormatRelSec(arrB)}到{FormatRelSec(depB)}发 {a.NextStationName} {a.NextPlatformNumber}台",
+                                    TimestampMs = NowMs()
+                                });
+                            }
+                            // 时间不重叠 → 不报
+                        }
+                        else
+                        {
+                            // 无法确定时刻，保守报警告
+                            alerts.Add(new AlertInfo
+                            {
+                                Level = "warning",
+                                TrainName = $"{a.TrainName}/{b.TrainName}",
+                                Message = $"站台可能冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台",
+                                TimestampMs = NowMs()
+                            });
+                        }
                     }
                     else if (aStoppedAtStation && bStoppedAtStation)
                     {
@@ -334,6 +356,55 @@ namespace RailRouteAssistant
             string arrStr = arriveIn > 0 ? $"{(int)arriveIn}秒后到达" : "即将到达";
             msg = $"停站车{stopped.TrainName}{depStr}，接近车{approaching.TrainName}{arrStr}";
             return true;
+        }
+
+        /// <summary>
+        /// 获取运行中列车在下一站的到达和发车相对时刻（距当前游戏时间的秒数）。
+        /// 用于判断两列运行中列车在同一站台的占用时间是否重叠。
+        /// 返回 false 表示无法确定时刻。
+        /// </summary>
+        private static bool TryGetRunningTrainOccupancy(TrainSnapshot train, double nowSec,
+            out double arriveIn, out double departIn)
+        {
+            arriveIn = -1;
+            departIn = -1;
+
+            // 到达剩余秒数（已由采集线程换算好）
+            if (!train.NextArrivalTimeTotalSeconds.HasValue)
+                return false;
+            arriveIn = train.NextArrivalTimeTotalSeconds.Value;
+            if (arriveIn < 0) arriveIn = 0;
+
+            // 从计划停站表中查找下一站的发车绝对时刻
+            var stop = train.ScheduledStops.FirstOrDefault(s => s.StationName == train.NextStationName);
+            if (stop != null && stop.DepartureGameTimeSeconds.HasValue)
+            {
+                departIn = stop.DepartureGameTimeSeconds.Value - nowSec;
+                if (departIn < arriveIn) departIn = arriveIn + 30;
+                return true;
+            }
+
+            // 通过站（不停站）：占用时间短，估算 30 秒
+            if (train.NextStationNonStop)
+            {
+                departIn = arriveIn + 30;
+                return true;
+            }
+
+            // 有停站时长但无绝对发车时刻
+            if (stop != null && stop.StopDurationMinutes > 0)
+            {
+                departIn = arriveIn + stop.StopDurationMinutes * 60.0;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string FormatRelSec(double sec)
+        {
+            if (sec <= 0) return "即将";
+            return $"{(int)sec}秒后";
         }
 
         private static bool IsStationStop(TrainSnapshot s)
