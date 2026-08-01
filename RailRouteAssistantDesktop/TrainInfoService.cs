@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using RailRouteHelper.Core;
 
 namespace RailRouteAssistantDesktop
 {
@@ -702,18 +703,7 @@ namespace RailRouteAssistantDesktop
 
         private static string NormalizeCode(string code)
         {
-            if (string.IsNullOrWhiteSpace(code)) return null;
-
-            var normalized = new string(code
-                .Where(character => !char.IsWhiteSpace(character) && character != '次')
-                .ToArray())
-                .Trim()
-                .ToUpperInvariant();
-            // 部分游戏地图用“通”标记通过列车。显示和播报保留原车号，
-            // 仅在查询 12306/离线库时移除该地图专用前缀。
-            if (normalized.Length > 1 && normalized[0] == '通')
-                normalized = normalized.Substring(1);
-            return string.IsNullOrEmpty(normalized) ? null : normalized;
+            return TrainCodeRules.NormalizeLookupCode(code);
         }
 
         private bool HasCurrentOnlineResult(string code, out CachedTrainInfo online)

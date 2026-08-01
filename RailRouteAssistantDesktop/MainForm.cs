@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using RailRouteHelper.Core;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -34,8 +35,10 @@ namespace RailRouteAssistantDesktop
         private VoiceEngine _voice;
         private CheckBox _muteCheck;                    // 静音开关
         private ToolStripMenuItem _voiceMenu;           // 语音包切换菜单
+        private ToolStripMenuItem _voiceRateMenu;       // TTS 补全语速菜单
         private List<VoiceEngine.VoiceOption> _voiceOptions = new();
-        private string _selectedVoiceKey;               // 当前选中的语音来源 Key（持久化用）
+        private string _selectedVoiceKey;               // 当前选中的补全 TTS Key（持久化用）
+        private int _selectedSpeechRate = VoiceEngine.DefaultSpeechRate;
         private bool _modalDialogShowing;               // 模态窗体显示中，暂停 TopMost 维持
         // 状态追踪：游戏列车 ID（无 ID 时回退原始车号）→ 上一次状态。用于检测状态变化触发播报。
         private readonly Dictionary<string, TrainPrevState> _prevStates = new();
@@ -92,7 +95,7 @@ namespace RailRouteAssistantDesktop
         {
             // 把版本直接放在标题栏，方便确认当前启动的是否为最新程序。
             Text = $"Rail Route 调度助手 v{DisplayVersion}";
-            Width = 540;
+            Width = 680;
             Height = 700;
             StartPosition = FormStartPosition.Manual;
             Location = new Point(50, 50);
@@ -186,6 +189,7 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("延误", 45);
             _trainList.Columns.Add("信号", 50);
             _trainList.Columns.Add("状态", 160);
+            _trainList.Columns.Add("当前停站", 110);
             _trainList.Columns.Add("前方停站", 90);
             _trainList.Columns.Add("站台", 40);
 
@@ -349,7 +353,7 @@ namespace RailRouteAssistantDesktop
         {
             _voiceOptions = VoiceEngine.GetAvailableVoices(audioDir);
             PopulateVoiceMenu();
-            RestoreVoiceSelection();
+            RestoreVoiceSettings();
             // 所有 Dock 控件已添加后，把菜单栏送到底层 z-order——
             // dock 布局从最高索引开始，MenuStrip 会最先占据顶部边缘，不被状态栏挤下去。
             MainMenuStrip?.SendToBack();
@@ -371,6 +375,28 @@ namespace RailRouteAssistantDesktop
                 item.Click += (s, e) => OnVoiceOptionClicked(opt);
                 _voiceMenu.DropDownItems.Add(item);
             }
+            _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
+
+            _voiceRateMenu = new ToolStripMenuItem("补全语音速度");
+            for (int rate = VoiceEngine.MinimumSpeechRate; rate <= VoiceEngine.MaximumSpeechRate; rate++)
+            {
+                int selectedRate = rate;
+                string suffix = rate switch
+                {
+                    VoiceEngine.MinimumSpeechRate => "（最慢）",
+                    4 => "（正常）",
+                    VoiceEngine.MaximumSpeechRate => "（最快，默认）",
+                    _ => ""
+                };
+                var rateItem = new ToolStripMenuItem($"{rate}{suffix}") { Tag = selectedRate };
+                rateItem.Click += (s, e) => OnSpeechRateClicked(selectedRate);
+                _voiceRateMenu.DropDownItems.Add(rateItem);
+            }
+            _voiceMenu.DropDownItems.Add(_voiceRateMenu);
+
+            var previewItem = _voiceMenu.DropDownItems.Add("试听当前补全语音");
+            previewItem.Click += (s, e) => _voice?.EnqueuePreview();
+
             _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
             var installItem = _voiceMenu.DropDownItems.Add("安装更多语音…");
             installItem.Click += (s, e) =>
@@ -399,9 +425,24 @@ namespace RailRouteAssistantDesktop
                 finally { _modalDialogShowing = false; }
                 return;
             }
-            _voice.ApplyVoice(opt);
+            if (!_voice.ApplyVoice(opt))
+            {
+                _modalDialogShowing = true;
+                try { MessageBox.Show("所选语音当前不可用，请重新打开菜单后再试。", "语音切换",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                finally { _modalDialogShowing = false; }
+                return;
+            }
             _selectedVoiceKey = opt.Key;
-            VoiceSettings.SaveSelectedKey(_selectedVoiceKey);
+            VoiceSettings.Save(_selectedVoiceKey, _selectedSpeechRate);
+            UpdateVoiceMenuChecks();
+        }
+
+        private void OnSpeechRateClicked(int rate)
+        {
+            _selectedSpeechRate = VoiceEngine.ClampSpeechRate(rate);
+            _voice?.SetSpeechRate(_selectedSpeechRate);
+            VoiceSettings.Save(_selectedVoiceKey, _selectedSpeechRate);
             UpdateVoiceMenuChecks();
         }
 
@@ -413,17 +454,33 @@ namespace RailRouteAssistantDesktop
                 if (item is ToolStripMenuItem mi && mi.Tag is VoiceEngine.VoiceOption opt)
                     mi.Checked = string.Equals(opt.Key, _selectedVoiceKey, StringComparison.Ordinal);
             }
+            if (_voiceRateMenu != null)
+            {
+                foreach (var item in _voiceRateMenu.DropDownItems)
+                {
+                    if (item is ToolStripMenuItem mi && mi.Tag is int rate)
+                        mi.Checked = rate == _selectedSpeechRate;
+                }
+            }
         }
 
-        private void RestoreVoiceSelection()
+        private void RestoreVoiceSettings()
         {
-            string saved = VoiceSettings.LoadSelectedKey();
-            if (string.IsNullOrEmpty(saved)) return;
+            var settings = VoiceSettings.Load();
+            string saved = settings.SelectedVoiceKey;
+            // v2.6.0-v2.6.2 把两个并不存在的 Edge 音色映射到了同一个百度 voice；
+            // 旧配置统一迁移为真实的百度选项。
+            if (!string.IsNullOrEmpty(saved) && saved.StartsWith("edge:", StringComparison.Ordinal))
+                saved = "baidu:default";
+            if (string.IsNullOrEmpty(saved)) saved = "baidu:default";
+
+            _selectedSpeechRate = VoiceEngine.ClampSpeechRate(settings.SpeechRate);
+            _voice?.SetSpeechRate(_selectedSpeechRate);
             var opt = _voiceOptions.FirstOrDefault(o =>
                 string.Equals(o.Key, saved, StringComparison.Ordinal));
-            if (opt != null && _voice != null)
+            if (opt == null) opt = _voiceOptions.FirstOrDefault();
+            if (opt != null && _voice != null && _voice.ApplyVoice(opt))
             {
-                _voice.ApplyVoice(opt);
                 _selectedVoiceKey = opt.Key;
             }
             UpdateVoiceMenuChecks();
@@ -615,8 +672,8 @@ namespace RailRouteAssistantDesktop
                 // 语音播报：状态变化检测（用原始车号追踪，拆分前调用）
                 DetectAndAnnounce();
 
-                // 拆分合并车号（如 G4545G4546 → G4545 / G4546 两行）
-                _trains = ExpandMergedTrains(_trains);
+                // 复合车次只显示当前运行段；到达首个计划停车站后切换到第二段车号。
+                _trains = ResolveActiveCompositeTrainCodes(_trains);
 
                 UpdateUI();
 
@@ -808,6 +865,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add(""); // 延误
             item.SubItems.Add(""); // 信号
             item.SubItems.Add(""); // 状态
+            item.SubItems.Add(""); // 当前停站
             item.SubItems.Add(""); // 前方停站
             item.SubItems.Add(""); // 站台
             UpdateTrainItem(item, t);
@@ -877,27 +935,11 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>
-        /// 检测合并车号（如 G3342G3343，两个车次拼在一起，需要中途换向）
-        /// 格式：字母+数字+字母+数字
-        /// </summary>
-        private static bool IsMergedTrainNumber(string name)
-        {
-            return TrySplitMergedTrainNumber(name, out _, out _);
-        }
-
-        /// <summary>
-        /// 尝试拆分合并车号。如 "G4545G4546" → ("G4545","G4546")。
-        /// 标准格式：字母+数字+字母+数字（两个车次拼接）。
+        /// 尝试拆分复合车号。支持 G4545G4546、0G6642G6641、DJ8598G3401。
         /// </summary>
         private static bool TrySplitMergedTrainNumber(string name, out string part1, out string part2)
         {
-            part1 = null; part2 = null;
-            if (string.IsNullOrEmpty(name) || name.Length < 4) return false;
-            var m = System.Text.RegularExpressions.Regex.Match(name, @"^([A-Za-z]\d+)([A-Za-z]\d+)$");
-            if (!m.Success) return false;
-            part1 = m.Groups[1].Value;
-            part2 = m.Groups[2].Value;
-            return true;
+            return TrainCodeRules.TrySplitCompositeCode(name, out part1, out part2);
         }
 
         /// <summary>
@@ -926,7 +968,7 @@ namespace RailRouteAssistantDesktop
 
         /// <summary>
         /// 语音播报：检测列车状态变化并触发播报。
-        /// 在 RefreshData 中、ExpandMergedTrains 之前调用，用原始车号追踪状态。
+        /// 在 RefreshData 中、活动复合车号解析之前调用，用原始车号追踪状态。
         /// 触发点：
         ///   等待入图：Waiting 由 false→true（首次见到不算，避免启动时全员播报）
         ///   到站/通过：ActualVisitCount 增加；LastVisitNonStop 区分两类访问
@@ -970,8 +1012,8 @@ namespace RailRouteAssistantDesktop
                 // 仅在已有上一帧状态时判断状态变化（避免启动时全员播报）
                 if (hadPrev)
                 {
-                    // 拆分合并车号：播报用第一段车号
-                    string announceCode = TrySplitMergedTrainNumber(t.Name, out var p1, out _) ? p1 : t.Name;
+                    // 复合车次在首个计划停车站前使用第一段，到站后切换为第二段。
+                    string announceCode = GetActiveTrainCode(t);
                     string dest = LookupDestination(announceCode);
 
                     // 1. 等待入图：在列车真正生成到地图前播报接近信息。
@@ -1193,25 +1235,20 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>
-        /// 拆分合并车号：将 "G4545G4546" 拆成两行 TrainData（各自车号），共享同一列车的实时运行状态。
-        /// G4545 行：车号=G4545，始发=G4545始发，终到=G4546始发（换向站）
-        /// G4546 行：车号=G4546，始发=G4546始发（换向站），终到=G4546终到
-        /// 非合并车号原样返回。
+        /// 复合车次仅保留一行：首个计划停车站前显示第一段，到站及之后显示第二段。
+        /// 原始对象仍在状态检测阶段使用，避免车号切换破坏连续状态追踪。
         /// </summary>
-        private List<TrainData> ExpandMergedTrains(List<TrainData> trains)
+        private List<TrainData> ResolveActiveCompositeTrainCodes(List<TrainData> trains)
         {
             var result = new List<TrainData>(trains.Count);
             foreach (var t in trains)
             {
-                if (TrySplitMergedTrainNumber(t.Name, out var p1, out var p2))
+                string activeCode = GetActiveTrainCode(t);
+                if (!string.Equals(activeCode, t.Name, StringComparison.Ordinal))
                 {
-                    // 拆成两行，复制全部运行状态
-                    var row1 = CloneTrain(t);
-                    row1.Name = p1;
-                    var row2 = CloneTrain(t);
-                    row2.Name = p2;
-                    result.Add(row1);
-                    result.Add(row2);
+                    var row = CloneTrain(t);
+                    row.Name = activeCode;
+                    result.Add(row);
                 }
                 else
                 {
@@ -1219,6 +1256,23 @@ namespace RailRouteAssistantDesktop
                 }
             }
             return result;
+        }
+
+        private static string GetActiveTrainCode(TrainData train)
+        {
+            if (train == null) return null;
+            bool secondLegActive = IsStationStop(train) ||
+                (train.ActualVisitCount > 0 && !train.LastVisitNonStop);
+            if (!secondLegActive && train.ScheduledVisitIndex >= 0 && train.ScheduledStops.Count > 0)
+            {
+                // 程序在换号站之后才启动时，最近一次访问可能已经变成后续通过站。
+                // 回看已完成的计划访问，只要其中存在有停车时长的站点，就保持第二段车号。
+                int lastVisitedIndex = Math.Min(train.ScheduledVisitIndex, train.ScheduledStops.Count - 1);
+                secondLegActive = train.ScheduledStops
+                    .Take(lastVisitedIndex + 1)
+                    .Any(stop => stop.StopMinutes > 0);
+            }
+            return TrainCodeRules.SelectActiveCode(train.Name, secondLegActive);
         }
 
         private static TrainData CloneTrain(TrainData t)
@@ -1365,11 +1419,28 @@ namespace RailRouteAssistantDesktop
                 // 未能读到紧邻下一座信号时保守显示未知，绝不再用减速臆断“关闭”。
                 signalStr = "未知";
 
+            // 当前停站：仅在确实因 Station 停车时显示，优先使用当前访问数据，
+            // 旧插件/短暂刷新缺字段时回退最近一次实际访问。
+            string currentStopStr = "";
+            if (isStationStop)
+            {
+                string currentStation = !string.IsNullOrEmpty(t.CurrentStation)
+                    ? StripEnglishPrefix(t.CurrentStation)
+                    : StripEnglishPrefix(t.LastVisitStation);
+                int currentPlatform = t.CurrentPlatform > 0 ? t.CurrentPlatform : t.LastVisitPlatform;
+                if (!string.IsNullOrEmpty(currentStation) && currentPlatform > 0)
+                    currentStopStr = $"{currentStation} {currentPlatform}道";
+                else if (!string.IsNullOrEmpty(currentStation))
+                    currentStopStr = currentStation;
+                else if (currentPlatform > 0)
+                    currentStopStr = $"{currentPlatform}道";
+            }
+
             // 前方停站（仅站名，去掉英文前缀）+ 站台号单独一列
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
-            // 始发/终到：从车次信息查询；合并车号已拆分，每行用各自车号查询
+            // 始发/终到：复合车次已选出当前运行段；0 前缀只在查询层移除。
             var originStr = "";
             var destStr = "";
             if (_trainInfo.TryLookup(t.Name, out var info))
@@ -1385,8 +1456,9 @@ namespace RailRouteAssistantDesktop
             item.SubItems[4].Text = delayStr;
             item.SubItems[5].Text = signalStr;
             item.SubItems[6].Text = status;
-            item.SubItems[7].Text = stationStr;
-            item.SubItems[8].Text = platformStr;
+            item.SubItems[7].Text = currentStopStr;
+            item.SubItems[8].Text = stationStr;
+            item.SubItems[9].Text = platformStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);
@@ -1485,7 +1557,7 @@ namespace RailRouteAssistantDesktop
         }
     }
 
-    /// <summary>语音包选择持久化：读写 %LOCALAPPDATA%\RailRouteAssistant\voice.json</summary>
+    /// <summary>补全 TTS 引擎与语速持久化：读写 %LOCALAPPDATA%\RailRouteAssistant\voice.json</summary>
     public static class VoiceSettings
     {
         private static readonly string Dir = Path.Combine(
@@ -1493,25 +1565,40 @@ namespace RailRouteAssistantDesktop
             "RailRouteAssistant");
         private static readonly string FilePath = Path.Combine(Dir, "voice.json");
 
-        public static string LoadSelectedKey()
+        public sealed class Preferences
+        {
+            public string SelectedVoiceKey { get; set; }
+            public int SpeechRate { get; set; } = RailRouteAssistantDesktop.VoiceEngine.DefaultSpeechRate;
+        }
+
+        public static Preferences Load()
         {
             try
             {
-                if (!File.Exists(FilePath)) return null;
+                if (!File.Exists(FilePath)) return new Preferences();
                 using var doc = JsonDocument.Parse(File.ReadAllText(FilePath));
-                return doc.RootElement.TryGetProperty("selectedVoiceKey", out var v) &&
-                    v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                string key = doc.RootElement.TryGetProperty("selectedVoiceKey", out var voice) &&
+                    voice.ValueKind == JsonValueKind.String ? voice.GetString() : null;
+                int rate = doc.RootElement.TryGetProperty("speechRate", out var speed) &&
+                    speed.ValueKind == JsonValueKind.Number && speed.TryGetInt32(out int value)
+                        ? RailRouteAssistantDesktop.VoiceEngine.ClampSpeechRate(value)
+                        : RailRouteAssistantDesktop.VoiceEngine.DefaultSpeechRate;
+                return new Preferences { SelectedVoiceKey = key, SpeechRate = rate };
             }
-            catch { return null; }
+            catch { return new Preferences(); }
         }
 
-        public static void SaveSelectedKey(string key)
+        public static void Save(string key, int speechRate)
         {
             try
             {
                 Directory.CreateDirectory(Dir);
                 File.WriteAllText(FilePath,
-                    JsonSerializer.Serialize(new { selectedVoiceKey = key }));
+                    JsonSerializer.Serialize(new
+                    {
+                        selectedVoiceKey = key,
+                        speechRate = RailRouteAssistantDesktop.VoiceEngine.ClampSpeechRate(speechRate)
+                    }));
             }
             catch { /* 持久化失败不影响运行时切换 */ }
         }

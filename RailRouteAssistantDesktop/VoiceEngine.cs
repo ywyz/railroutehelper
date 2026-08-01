@@ -24,7 +24,9 @@ namespace RailRouteAssistantDesktop
     /// </summary>
     public class VoiceEngine : IDisposable
     {
-        private const string TtsProsodyRate = "+20%";
+        public const int MinimumSpeechRate = 1;
+        public const int MaximumSpeechRate = 7;
+        public const int DefaultSpeechRate = 7;
         private const string ChineseCulturePrefix = "zh";
         private readonly string _audioDir;
         private readonly BlockingCollection<List<Segment>> _queue = new();
@@ -32,16 +34,19 @@ namespace RailRouteAssistantDesktop
         private readonly System.Speech.Synthesis.SpeechSynthesizer _tts;           // System.Speech（SAPI5）后端
         private readonly Windows.Media.SpeechSynthesis.SpeechSynthesizer _oneCore;  // OneCore 后端
         private readonly bool _oneCoreAvailable;
-        private bool _hasChineseVoice;
-        private VoiceSourceMode _mode = VoiceSourceMode.PreRecorded;
-        private string _edgeVoiceShortName;  // Edge-TTS 选中时非 null
+        private readonly bool _hasOneCoreChineseVoice;
+        private readonly bool _hasSapiChineseVoice;
+        private readonly object _settingsLock = new();
+        private TtsBackend _selectedBackend = TtsBackend.Baidu;
+        private string _selectedVoiceName;
+        private string _selectedVoiceKey = "baidu:default";
+        private int _speechRate = DefaultSpeechRate;
         private bool _onlineTtsEnabled = true;  // 在线 TTS（百度）默认开启，启动时探测可达性
         private bool _disposed;
 
-        /// <summary>语音来源模式：预录音频拼接 / 纯 TTS 合成。</summary>
-        public enum VoiceSourceMode { PreRecorded, TtsOnly }
+        /// <summary>用于补全预录素材缺失内容的 TTS 后端。</summary>
+        public enum TtsBackend { Baidu, OneCore, Sapi5 }
 
-        // 纯 TTS 模式下数字逐位读音；预录模式用 0-9.mp3。
         private static readonly string[] DigitChinese = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
 
         // 车号字母 → 读音音频文件名（音频库中已有的字母读音 wav）
@@ -56,6 +61,7 @@ namespace RailRouteAssistantDesktop
         {
             { 'G', "高" }, { 'D', "动" }, { 'C', "城" }, { 'Z', "直" },
             { 'K', "快" }, { 'T', "特" }, { 'X', "行" }, { 'S', "市域" },
+            { 'J', "检" },
         };
 
         public VoiceEngine(string audioDir)
@@ -69,12 +75,11 @@ namespace RailRouteAssistantDesktop
             _oneCoreAvailable = _oneCore != null;
             // OneCore 和 System.Speech 都尝试选中中文 voice：OneCore 用于合成（能看到 Kangkank 等），
                 // System.Speech 作为 OneCore 不可用/失败时的回退。用 | 不短路，确保两者都执行。
-                bool oneCoreZh = _oneCoreAvailable && HasOneCoreChineseVoice();
-                bool sapiZh = TrySelectChineseVoice();
-                _hasChineseVoice = oneCoreZh | sapiZh;
+                _hasOneCoreChineseVoice = _oneCoreAvailable && TrySelectOneCoreChineseVoice();
+                _hasSapiChineseVoice = TrySelectChineseVoice();
             // 探测在线 TTS（百度）可达性：不通则关闭，避免每段播报都超时拖慢。
             _onlineTtsEnabled = ProbeOnlineTts();
-            // 具体播报段通过 SSML 设为 +20%，这里保留默认基准速度。
+            // 具体播报段根据设置动态生成 SSML；这里保留默认基准速度。
             _tts.Rate = 0;
             _tts.Volume = 100;
 
@@ -88,12 +93,15 @@ namespace RailRouteAssistantDesktop
             catch { /* OneCore 不可用（旧系统或精简版）：回退 System.Speech */ return null; }
         }
 
-        private bool HasOneCoreChineseVoice()
+        private bool TrySelectOneCoreChineseVoice()
         {
             try
             {
-                return Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
-                    .Any(v => v.Language.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase));
+                var voice = Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
+                    .FirstOrDefault(v => v.Language.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase));
+                if (voice == null) return false;
+                _oneCore.Voice = voice;
+                return true;
             }
             catch { return false; }
         }
@@ -125,43 +133,32 @@ namespace RailRouteAssistantDesktop
             return false;
         }
 
-        /// <summary>一个可选语音来源：预录音源或某个系统 TTS voice。</summary>
+        /// <summary>一个可选的补全 TTS 引擎/音色；预录素材始终优先播放。</summary>
         public sealed class VoiceOption
         {
-            public string Key;          // "prerecorded" 或 TTS voice Name
+            public string Key;
             public string DisplayName;  // 菜单显示文字
-            public bool IsPreRecorded;  // true=预录音频拼接；false=纯 TTS
-            public string VoiceName;    // TTS voice Name；预录模式为 null
+            public TtsBackend Backend;
+            public string VoiceName;
         }
 
         /// <summary>
-        /// 枚举系统中所有可用的中文 TTS voice，并附带预录音源选项（当 audioDir 存在时）。
+        /// 枚举百度和系统中所有可用的中文 TTS voice。所有选项只决定缺词补全引擎；
+        /// 车号、数字和提示音等预录素材始终优先。
         /// 优先用 OneCore 枚举（能看到 Kangkang 男声等 OneCore voice），OneCore 不可用
         /// 时回退 System.Speech。不持有 VoiceEngine 实例也能调用——供菜单构建使用。
         /// </summary>
         public static List<VoiceOption> GetAvailableVoices(string audioDir)
         {
-            var list = new List<VoiceOption>();
-            if (!string.IsNullOrEmpty(audioDir) && Directory.Exists(audioDir))
+            var list = new List<VoiceOption>
             {
-                list.Add(new VoiceOption
+                new VoiceOption
                 {
-                    Key = "prerecorded",
-                    DisplayName = "预录广播音源（男声）",
-                    IsPreRecorded = true
-                });
-            }
-            // Edge-TTS 在线声色（网吧/精简系统也能用，只要有网）
-            foreach (var (shortName, display, male) in EdgeTtsClient.ChineseVoices)
-            {
-                list.Add(new VoiceOption
-                {
-                    Key = "edge:" + shortName,
-                    DisplayName = "在线 · " + display,
-                    IsPreRecorded = false,
-                    VoiceName = shortName
-                });
-            }
+                    Key = "baidu:default",
+                    DisplayName = "在线 · 百度中文女声",
+                    Backend = TtsBackend.Baidu
+                }
+            };
             // OneCore 优先
             try
             {
@@ -180,93 +177,114 @@ namespace RailRouteAssistantDesktop
                     list.Add(new VoiceOption
                     {
                         Key = "onecore:" + v.Id,
-                        DisplayName = "TTS · " + display,
-                        IsPreRecorded = false,
+                        DisplayName = "系统 OneCore · " + display,
+                        Backend = TtsBackend.OneCore,
                         VoiceName = v.Id
                     });
                 }
             }
             catch { /* OneCore 不可用：回退 System.Speech */ }
-            // System.Speech 回退
-            if (list.Count == 1)
+            // System.Speech（SAPI5）单独列出。旧实现因为在线选项已加入 list，
+            // 错把 Count 当作 OneCore 是否可用，导致 SAPI5 voice 永远不会出现在菜单中。
+            try
             {
-                try
+                using var probe = new SapiSpeechSynthesizer();
+                foreach (var voice in probe.GetInstalledVoices())
                 {
-                    using var probe = new SapiSpeechSynthesizer();
-                        foreach (var voice in probe.GetInstalledVoices())
-                        {
-                            if (!voice.Enabled) continue;
-                            var info = voice.VoiceInfo;
-                            if (info?.Culture == null) continue;
-                            if (!info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            string gender = info.Gender switch
-                            {
-                                SapiVoiceGender.Male => "男声",
-                                SapiVoiceGender.Female => "女声",
-                                _ => null
-                            };
-                        string display = gender != null ? $"{info.Name}（{gender}）" : info.Name;
-                        list.Add(new VoiceOption
+                    if (!voice.Enabled) continue;
+                    var info = voice.VoiceInfo;
+                    if (info?.Culture == null) continue;
+                    if (!info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    string gender = info.Gender switch
+                    {
+                        SapiVoiceGender.Male => "男声",
+                        SapiVoiceGender.Female => "女声",
+                        _ => null
+                    };
+                    string display = gender != null ? $"{info.Name}（{gender}）" : info.Name;
+                    list.Add(new VoiceOption
                         {
                             Key = "sapi5:" + info.Name,
-                            DisplayName = "TTS · " + display,
-                            IsPreRecorded = false,
+                            DisplayName = "系统 SAPI5 · " + display,
+                            Backend = TtsBackend.Sapi5,
                             VoiceName = info.Name
                         });
-                    }
                 }
-                catch { /* 枚举失败：只返回预录选项 */ }
             }
+            catch { /* 枚举失败：保留百度和 OneCore 选项 */ }
             return list;
         }
 
-        /// <summary>运行时切换语音来源。预录模式回退为音频拼接；TTS 模式选中指定 voice。</summary>
-        public void ApplyVoice(VoiceOption option)
+        /// <summary>运行时切换缺词补全 TTS。返回 false 表示指定的本地 voice 已不可用。</summary>
+        public bool ApplyVoice(VoiceOption option)
         {
-            if (option == null) return;
-            if (option.IsPreRecorded)
-            {
-                _mode = VoiceSourceMode.PreRecorded;
-                _edgeVoiceShortName = null;
-                return;
-            }
+            if (option == null) return false;
             try
             {
-                if (option.Key.StartsWith("edge:"))
+                if (option.Backend == TtsBackend.OneCore)
                 {
-                    // Edge-TTS：不需要本地 voice，只要有网即可
-                    _edgeVoiceShortName = option.VoiceName;
-                    _hasChineseVoice = true;
-                    _mode = VoiceSourceMode.TtsOnly;
-                    return;
+                    if (!_oneCoreAvailable ||
+                        !Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices.Any(v => v.Id == option.VoiceName))
+                        return false;
                 }
-                _edgeVoiceShortName = null;
+                else if (option.Backend == TtsBackend.Sapi5)
+                {
+                    using var probe = new SapiSpeechSynthesizer();
+                    bool exists = probe.GetInstalledVoices().Any(v =>
+                        v.Enabled && v.VoiceInfo.Name == option.VoiceName);
+                    if (!exists) return false;
+                }
 
-                if (option.Key.StartsWith("onecore:") && _oneCoreAvailable)
+                lock (_settingsLock)
                 {
-                    var match = Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
-                        .FirstOrDefault(v => v.Id == option.VoiceName);
-                    if (match != null)
-                    {
-                        _oneCore.Voice = match;
-                        _hasChineseVoice = true;
-                        _mode = VoiceSourceMode.TtsOnly;
-                        return;
-                    }
+                    _selectedBackend = option.Backend;
+                    _selectedVoiceName = option.VoiceName;
+                    _selectedVoiceKey = option.Key;
                 }
-                // SAPI5 回退
-                _tts.SelectVoice(option.VoiceName);
-                _hasChineseVoice = true;
-                _mode = VoiceSourceMode.TtsOnly;
+                return true;
             }
-            catch { /* 选择失败：保留当前模式 */ }
+            catch { return false; }
         }
 
-        /// <summary>当前模式，供 UI 显示选中状态。</summary>
-        public VoiceSourceMode CurrentMode => _mode;
-        /// <summary>当前 TTS voice 名（预录模式为 null）。</summary>
-        public string CurrentVoiceName => _mode == VoiceSourceMode.TtsOnly ? _tts?.Voice?.Name : null;
+        /// <summary>设置 1（最慢）到 7（最快）的补全语音速度。</summary>
+        public void SetSpeechRate(int rate)
+        {
+            lock (_settingsLock) _speechRate = ClampSpeechRate(rate);
+        }
+
+        public int SpeechRate
+        {
+            get { lock (_settingsLock) return _speechRate; }
+        }
+
+        public string SelectedVoiceKey
+        {
+            get { lock (_settingsLock) return _selectedVoiceKey; }
+        }
+
+        internal static int ClampSpeechRate(int rate) =>
+            Math.Max(MinimumSpeechRate, Math.Min(MaximumSpeechRate, rate));
+
+        internal static string ToSsmlRate(int rate)
+        {
+            int percent = (ClampSpeechRate(rate) - 4) * 10;
+            return percent >= 0 ? $"+{percent}%" : $"{percent}%";
+        }
+
+        /// <summary>只用当前选中的 TTS 播放试听，不经过预录素材。</summary>
+        public void EnqueuePreview()
+        {
+            if (_disposed) return;
+            try
+            {
+                _queue.Add(new List<Segment>
+                {
+                    new Segment { Kind = SegKind.Tts, Text = "语音切换测试，当前语速设置成功。" }
+                });
+            }
+            catch (InvalidOperationException) { /* 正在关闭 */ }
+        }
 
         /// <summary>播报类型</summary>
         public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing, DirectionChange }
@@ -450,31 +468,22 @@ namespace RailRouteAssistantDesktop
                 if (char.IsLetter(c))
                 {
                     char up = char.ToUpper(c);
-                    if (_mode == VoiceSourceMode.TtsOnly)
-                    {
-                        // 纯 TTS：字母读对应汉字（高/动/城…），不再用预录 wav。
-                        if (LetterReadingText.TryGetValue(up, out var txt))
-                            AddTts(segs, txt);
-                        else
-                            AddTts(segs, up.ToString());
-                    }
+                    // 始终优先使用原有铁路广播音源；只有素材库缺少该字母时才交给 TTS。
+                    if (LetterReadingFiles.TryGetValue(up, out var wav) && AudioExists(wav))
+                        AddAudio(segs, wav);
+                    else if (AudioExists(up + ".mp3"))
+                        AddAudio(segs, up + ".mp3");
+                    else if (LetterReadingText.TryGetValue(up, out var txt))
+                        AddTts(segs, txt);
                     else
-                    {
-                        // 预录模式：优先用音频库的字母读音 wav
-                        if (LetterReadingFiles.TryGetValue(up, out var wav) && AudioExists(wav))
-                            AddAudio(segs, wav);
-                        else if (LetterReadingText.TryGetValue(up, out var txt))
-                            AddTts(segs, txt);
-                        else
-                            AddTts(segs, up.ToString());  // 未知字母回退
-                    }
+                        AddTts(segs, up.ToString());
                 }
                 else if (char.IsDigit(c))
                 {
-                    if (_mode == VoiceSourceMode.TtsOnly)
-                        AddTts(segs, DigitChinese[c - '0']);
-                    else
+                    if (AudioExists(c + ".mp3"))
                         AddAudio(segs, c + ".mp3");
+                    else
+                        AddTts(segs, DigitChinese[c - '0']);
                 }
             }
         }
@@ -485,10 +494,10 @@ namespace RailRouteAssistantDesktop
             if (n <= 0) return;
             foreach (char c in n.ToString())
             {
-                if (_mode == VoiceSourceMode.TtsOnly)
-                    AddTts(segs, DigitChinese[c - '0']);
-                else
+                if (AudioExists(c + ".mp3"))
                     AddAudio(segs, c + ".mp3");
+                else
+                    AddTts(segs, DigitChinese[c - '0']);
             }
         }
 
@@ -496,7 +505,17 @@ namespace RailRouteAssistantDesktop
         private void AddMinuteCount(List<Segment> segs, int minutes)
         {
             if (minutes <= 0) return;
-            AddTts(segs, FormatChineseCardinal(minutes) + "分");
+            string cardinal = FormatChineseCardinal(minutes);
+            string recorded = FindRecordedFile(cardinal);
+            if (recorded != null)
+            {
+                AddAudio(segs, recorded);
+                AddTts(segs, "分");
+            }
+            else
+            {
+                AddTts(segs, cardinal + "分");
+            }
         }
 
         /// <summary>
@@ -544,6 +563,17 @@ namespace RailRouteAssistantDesktop
 
         private bool AudioExists(string file) => File.Exists(Path.Combine(_audioDir, file));
 
+        private string FindRecordedFile(string phrase)
+        {
+            if (string.IsNullOrWhiteSpace(phrase)) return null;
+            foreach (string extension in new[] { ".wav", ".mp3" })
+            {
+                string file = phrase + extension;
+                if (AudioExists(file)) return file;
+            }
+            return null;
+        }
+
         private void AddAudio(List<Segment> segs, string file)
         {
             if (AudioExists(file)) segs.Add(new Segment { Kind = SegKind.Audio, File = file });
@@ -551,7 +581,28 @@ namespace RailRouteAssistantDesktop
 
         private void AddTts(List<Segment> segs, string text)
         {
-            if (!string.IsNullOrEmpty(text)) segs.Add(new Segment { Kind = SegKind.Tts, Text = text });
+            if (string.IsNullOrEmpty(text)) return;
+
+            // 完整词句在素材库中存在时直接使用原声；不存在时才交给选定的 TTS 补全。
+            string phrase = text.Trim().Trim('，', '。', '！', '？', ',', '.', '!', '?');
+            string recorded = FindRecordedFile(phrase);
+            if (recorded != null)
+                AddAudio(segs, recorded);
+            else
+            {
+                // 合并相邻 TTS 文本，只发起一次百度/系统合成，消除短词逐段请求造成的
+                // 网络等待和句间停顿；预录音频仍自然地充当分隔点。
+                if (segs.Count > 0 && segs[segs.Count - 1].Kind == SegKind.Tts)
+                {
+                    var merged = segs[segs.Count - 1];
+                    merged.Text += text;
+                    segs[segs.Count - 1] = merged;
+                }
+                else
+                {
+                    segs.Add(new Segment { Kind = SegKind.Tts, Text = text });
+                }
+            }
         }
 
         private void PlayerLoop()
@@ -586,43 +637,31 @@ namespace RailRouteAssistantDesktop
 
         private void PlayTts(string text)
         {
-            // 没有中文语音时直接跳过——用英文 voice 读中文会得到无法辨认的乱音，
-            // 比静默更糟。预录音频（车号、数字、提示音）不依赖 TTS，仍正常播放。
-            // 在线 TTS 可用时不受此限制（百度接口本身是中文 voice）。
-            if (!_hasChineseVoice && string.IsNullOrEmpty(_edgeVoiceShortName) && !_onlineTtsEnabled)
+            TtsBackend backend;
+            string voiceName;
+            int rate;
+            lock (_settingsLock)
             {
-                return;
+                backend = _selectedBackend;
+                voiceName = _selectedVoiceName;
+                rate = _speechRate;
             }
 
-            // 在线百度 TTS 优先：网吧/精简系统本地 TTS 常不可用，在线合成质量高且国内可达。
-            // 无论预录模式还是纯 TTS 模式，TTS 段（站名、句式）都优先走在线——
-            // 预录模式仍保留预录音频（车号、数字、提示音）的拼接，只替换 TTS 段。
-            if (_onlineTtsEnabled)
+            // 先严格使用用户选择的引擎。旧实现无条件先走百度，导致 OneCore/SAPI
+            // 虽然菜单打勾但实际声音完全不变。
+            bool played = backend switch
             {
-                if (TryPlayEdge(text)) return;
-            }
+                TtsBackend.Baidu => TryPlayBaidu(text, rate),
+                TtsBackend.OneCore => TryPlayOneCore(text, voiceName, rate),
+                TtsBackend.Sapi5 => TryPlaySapi(text, voiceName, rate),
+                _ => false
+            };
+            if (played) return;
 
-            // OneCore 次之
-            if (_oneCoreAvailable)
-            {
-                if (TryPlayOneCore(text)) return;
-            }
-
-            // System.Speech 兜底
-            try
-            {
-                string escaped = SecurityElement.Escape(text) ?? string.Empty;
-                _tts.SpeakSsml(
-                    "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
-                    "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>");
-                return;
-            }
-            catch
-            {
-                // SSML 不支持时回退普通播报
-            }
-            try { _tts.Rate = 2; _tts.Speak(text); _tts.Rate = 0; return; }
-            catch { /* TTS 不可用时静默 */ }
+            // 选定引擎临时失败时才按本地中文 voice → 在线百度的顺序兜底。
+            if (backend != TtsBackend.OneCore && TryPlayOneCore(text, null, rate)) return;
+            if (backend != TtsBackend.Sapi5 && TryPlaySapi(text, null, rate)) return;
+            if (backend != TtsBackend.Baidu && _onlineTtsEnabled) TryPlayBaidu(text, rate);
         }
 
         /// <summary>启动时探测百度 TTS 是否可达：用短词合成一次，成功则启用在线 TTS。</summary>
@@ -630,18 +669,18 @@ namespace RailRouteAssistantDesktop
         {
             try
             {
-                byte[] data = EdgeTtsClient.Synthesize("测试", null);
+                byte[] data = EdgeTtsClient.Synthesize("测试", DefaultSpeechRate);
                 return data != null && data.Length > 100;
             }
             catch { return false; }
         }
 
         /// <summary>用百度 TTS 合成并用 NAudio 播放 MP3。</summary>
-        private bool TryPlayEdge(string text)
+        private bool TryPlayBaidu(string text, int rate)
         {
             try
             {
-                byte[] mp3 = EdgeTtsClient.Synthesize(text, _edgeVoiceShortName);
+                byte[] mp3 = EdgeTtsClient.Synthesize(text, rate);
                 if (mp3 == null || mp3.Length == 0) return false;
                 using var ms = new MemoryStream(mp3);
                 using var reader = new Mp3FileReader(ms);
@@ -649,23 +688,36 @@ namespace RailRouteAssistantDesktop
                 waveOut.Init(reader);
                 waveOut.Play();
                 while (waveOut.PlaybackState == PlaybackState.Playing) Thread.Sleep(50);
+                _onlineTtsEnabled = true;
                 return true;
             }
-            catch { return false; }
+            catch
+            {
+                _onlineTtsEnabled = false;
+                return false;
+            }
         }
 
         /// <summary>
         /// 用 OneCore 合成 SSML 并用 NAudio 播放。OneCore 输出 WAV 流，
         /// 转入 MemoryStream 后用 WaveFileReader 解码播放。在后台线程同步阻塞直到播完。
         /// </summary>
-        private bool TryPlayOneCore(string text)
+        private bool TryPlayOneCore(string text, string voiceName, int rate)
         {
+            if (!_oneCoreAvailable || !_hasOneCoreChineseVoice) return false;
             try
             {
+                if (!string.IsNullOrEmpty(voiceName))
+                {
+                    var match = Windows.Media.SpeechSynthesis.SpeechSynthesizer.AllVoices
+                        .FirstOrDefault(v => v.Id == voiceName);
+                    if (match == null) return false;
+                    _oneCore.Voice = match;
+                }
                 string escaped = SecurityElement.Escape(text) ?? string.Empty;
                 string ssml =
                     "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
-                    "<prosody rate=\"" + TtsProsodyRate + "\">" + escaped + "</prosody></speak>";
+                    "<prosody rate=\"" + ToSsmlRate(rate) + "\">" + escaped + "</prosody></speak>";
                 var task = _oneCore.SynthesizeSsmlToStreamAsync(ssml).AsTask();
                 task.Wait();
                 if (task.IsFaulted) return false;
@@ -685,6 +737,36 @@ namespace RailRouteAssistantDesktop
             catch
             {
                 // OneCore 合成/播放失败（voice 不支持 SSML、音频设备问题等）：回退 System.Speech
+                return false;
+            }
+        }
+
+        private bool TryPlaySapi(string text, string voiceName, int rate)
+        {
+            if (!_hasSapiChineseVoice) return false;
+            try
+            {
+                if (!string.IsNullOrEmpty(voiceName)) _tts.SelectVoice(voiceName);
+                string escaped = SecurityElement.Escape(text) ?? string.Empty;
+                _tts.SpeakSsml(
+                    "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"zh-CN\">" +
+                    "<prosody rate=\"" + ToSsmlRate(rate) + "\">" + escaped + "</prosody></speak>");
+                return true;
+            }
+            catch
+            {
+                // 某些 SAPI voice 不支持 prosody SSML，回退其原生 -10..10 速度。
+            }
+            try
+            {
+                _tts.Rate = ClampSpeechRate(rate) - 4;
+                _tts.Speak(text);
+                _tts.Rate = 0;
+                return true;
+            }
+            catch
+            {
+                try { _tts.Rate = 0; } catch { }
                 return false;
             }
         }
