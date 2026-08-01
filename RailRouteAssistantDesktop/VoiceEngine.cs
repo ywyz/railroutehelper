@@ -22,8 +22,15 @@ namespace RailRouteAssistantDesktop
         private readonly BlockingCollection<List<Segment>> _queue = new();
         private readonly Thread _playerThread;
         private readonly SpeechSynthesizer _tts;
-        private readonly bool _hasChineseVoice;
+        private bool _hasChineseVoice;
+        private VoiceSourceMode _mode = VoiceSourceMode.PreRecorded;
         private bool _disposed;
+
+        /// <summary>语音来源模式：预录音频拼接 / 纯 TTS 合成。</summary>
+        public enum VoiceSourceMode { PreRecorded, TtsOnly }
+
+        // 纯 TTS 模式下数字逐位读音；预录模式用 0-9.mp3。
+        private static readonly string[] DigitChinese = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
 
         // 车号字母 → 读音音频文件名（音频库中已有的字母读音 wav）
         private static readonly Dictionary<char, string> LetterReadingFiles = new()
@@ -78,6 +85,84 @@ namespace RailRouteAssistantDesktop
             catch { /* 语音枚举/选择失败：按无中文 TTS 处理 */ }
             return false;
         }
+
+        /// <summary>一个可选语音来源：预录音源或某个系统 TTS voice。</summary>
+        public sealed class VoiceOption
+        {
+            public string Key;          // "prerecorded" 或 TTS voice Name
+            public string DisplayName;  // 菜单显示文字
+            public bool IsPreRecorded;  // true=预录音频拼接；false=纯 TTS
+            public string VoiceName;    // TTS voice Name；预录模式为 null
+        }
+
+        /// <summary>
+        /// 枚举系统中所有可用的中文 TTS voice，并附带预录音源选项（当 audioDir 存在时）。
+        /// 不持有 VoiceEngine 实例也能调用——供菜单构建使用。
+        /// </summary>
+        public static List<VoiceOption> GetAvailableVoices(string audioDir)
+        {
+            var list = new List<VoiceOption>();
+            if (!string.IsNullOrEmpty(audioDir) && Directory.Exists(audioDir))
+            {
+                list.Add(new VoiceOption
+                {
+                    Key = "prerecorded",
+                    DisplayName = "预录广播音源（男声）",
+                    IsPreRecorded = true
+                });
+            }
+            try
+            {
+                using var probe = new SpeechSynthesizer();
+                foreach (var voice in probe.GetInstalledVoices())
+                {
+                    if (!voice.Enabled) continue;
+                    var info = voice.VoiceInfo;
+                    if (info?.Culture == null) continue;
+                    if (!info.Culture.Name.StartsWith(ChineseCulturePrefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    string gender = info.Gender switch
+                    {
+                        VoiceGender.Male => "男声",
+                        VoiceGender.Female => "女声",
+                        _ => null
+                    };
+                    string display = gender != null ? $"{info.Name}（{gender}）" : info.Name;
+                    list.Add(new VoiceOption
+                    {
+                        Key = info.Name,
+                        DisplayName = "TTS · " + display,
+                        IsPreRecorded = false,
+                        VoiceName = info.Name
+                    });
+                }
+            }
+            catch { /* 枚举失败：只返回预录选项 */ }
+            return list;
+        }
+
+        /// <summary>运行时切换语音来源。预录模式回退为音频拼接；TTS 模式选中指定 voice。</summary>
+        public void ApplyVoice(VoiceOption option)
+        {
+            if (option == null) return;
+            if (option.IsPreRecorded)
+            {
+                _mode = VoiceSourceMode.PreRecorded;
+                return;
+            }
+            try
+            {
+                _tts.SelectVoice(option.VoiceName);
+                _hasChineseVoice = true;
+                _mode = VoiceSourceMode.TtsOnly;
+            }
+            catch { /* 选择失败：保留当前模式 */ }
+        }
+
+        /// <summary>当前模式，供 UI 显示选中状态。</summary>
+        public VoiceSourceMode CurrentMode => _mode;
+        /// <summary>当前 TTS voice 名（预录模式为 null）。</summary>
+        public string CurrentVoiceName => _mode == VoiceSourceMode.TtsOnly ? _tts?.Voice?.Name : null;
 
         /// <summary>播报类型</summary>
         public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing, DirectionChange }
@@ -261,17 +346,31 @@ namespace RailRouteAssistantDesktop
                 if (char.IsLetter(c))
                 {
                     char up = char.ToUpper(c);
-                    // 优先用音频库的字母读音 wav
-                    if (LetterReadingFiles.TryGetValue(up, out var wav) && AudioExists(wav))
-                        AddAudio(segs, wav);
-                    else if (LetterReadingText.TryGetValue(up, out var txt))
-                        AddTts(segs, txt);
+                    if (_mode == VoiceSourceMode.TtsOnly)
+                    {
+                        // 纯 TTS：字母读对应汉字（高/动/城…），不再用预录 wav。
+                        if (LetterReadingText.TryGetValue(up, out var txt))
+                            AddTts(segs, txt);
+                        else
+                            AddTts(segs, up.ToString());
+                    }
                     else
-                        AddTts(segs, up.ToString());  // 未知字母回退
+                    {
+                        // 预录模式：优先用音频库的字母读音 wav
+                        if (LetterReadingFiles.TryGetValue(up, out var wav) && AudioExists(wav))
+                            AddAudio(segs, wav);
+                        else if (LetterReadingText.TryGetValue(up, out var txt))
+                            AddTts(segs, txt);
+                        else
+                            AddTts(segs, up.ToString());  // 未知字母回退
+                    }
                 }
                 else if (char.IsDigit(c))
                 {
-                    AddAudio(segs, c + ".mp3");
+                    if (_mode == VoiceSourceMode.TtsOnly)
+                        AddTts(segs, DigitChinese[c - '0']);
+                    else
+                        AddAudio(segs, c + ".mp3");
                 }
             }
         }
@@ -280,7 +379,13 @@ namespace RailRouteAssistantDesktop
         private void AddNumber(List<Segment> segs, int n)
         {
             if (n <= 0) return;
-            foreach (char c in n.ToString()) AddAudio(segs, c + ".mp3");
+            foreach (char c in n.ToString())
+            {
+                if (_mode == VoiceSourceMode.TtsOnly)
+                    AddTts(segs, DigitChinese[c - '0']);
+                else
+                    AddAudio(segs, c + ".mp3");
+            }
         }
 
         /// <summary>时间分钟使用中文基数词，避免把 15 分逐位读成“一五分”。</summary>

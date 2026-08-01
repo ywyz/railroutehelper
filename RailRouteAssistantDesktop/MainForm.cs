@@ -33,6 +33,9 @@ namespace RailRouteAssistantDesktop
         // ===== 语音播报 =====
         private VoiceEngine _voice;
         private CheckBox _muteCheck;                    // 静音开关
+        private ToolStripMenuItem _voiceMenu;           // 语音包切换菜单
+        private List<VoiceEngine.VoiceOption> _voiceOptions = new();
+        private string _selectedVoiceKey;               // 当前选中的语音来源 Key（持久化用）
         // 状态追踪：游戏列车 ID（无 ID 时回退原始车号）→ 上一次状态。用于检测状态变化触发播报。
         private readonly Dictionary<string, TrainPrevState> _prevStates = new();
         // 防重复：(车号|播报类型) → 上次播报的 UTC 时间
@@ -62,15 +65,16 @@ namespace RailRouteAssistantDesktop
             _trainInfo = new TrainInfoService(_http);
             SetupUI();
             // 初始化语音播报引擎（音频目录 = 输出目录/assets/audio）
-            try
-            {
                 string audioDir = Path.Combine(AppContext.BaseDirectory, "assets", "audio");
-                if (Directory.Exists(audioDir))
-                    _voice = new VoiceEngine(audioDir);
-                else
-                    Console.WriteLine($"[Voice] 音频目录不存在: {audioDir}");
-            }
-            catch (Exception ex) { Console.WriteLine($"[Voice] 初始化失败: {ex.Message}"); }
+                try
+                {
+                    if (Directory.Exists(audioDir))
+                        _voice = new VoiceEngine(audioDir);
+                    else
+                        Console.WriteLine($"[Voice] 音频目录不存在: {audioDir}");
+                }
+                catch (Exception ex) { Console.WriteLine($"[Voice] 初始化失败: {ex.Message}"); }
+                InitVoiceMenu(audioDir);
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };
             _timer.Tick += async (s, e) => await RefreshData();
             _timer.Start();
@@ -96,7 +100,10 @@ namespace RailRouteAssistantDesktop
             Opacity = 0.95;
             BackColor = ColorBg;
 
-            // WinForms Dock 规则：Dock=Top 的控件按"添加顺序"从顶部依次向下堆叠
+                // 顶部菜单栏：语音包切换（必须在其它 Dock=Top 控件之前添加，z-order 才会在最顶）
+                BuildVoiceMenu();
+
+                // WinForms Dock 规则：Dock=Top 的控件按"添加顺序"从顶部依次向下堆叠
             // Dock=Fill 填充所有 Top/Bottom 排列后的剩余中间空间
             //
             // 期望布局从上到下：statusLabel, trainHeader, trainList(Fill), alertHeader, alertList, statsLabel
@@ -324,6 +331,88 @@ namespace RailRouteAssistantDesktop
             if (_muteCheck == null || _statusLabel == null) return;
             _muteCheck.Top = (_statusLabel.Height - _muteCheck.Height) / 2;
             _muteCheck.Left = _statusLabel.Width - _muteCheck.Width - 6;
+        }
+
+        // ===== 语音包切换 =====
+        private void BuildVoiceMenu()
+        {
+            _voiceMenu = new ToolStripMenuItem("语音");
+            var menuStrip = new MenuStrip { BackColor = ColorPanel, ForeColor = Color.LightGray,
+                Font = new Font("Microsoft YaHei UI", 9F) };
+            menuStrip.Items.Add(_voiceMenu);
+            MainMenuStrip = menuStrip;
+            Controls.Add(menuStrip);
+        }
+
+        private void InitVoiceMenu(string audioDir)
+        {
+            _voiceOptions = VoiceEngine.GetAvailableVoices(audioDir);
+            PopulateVoiceMenu();
+            RestoreVoiceSelection();
+        }
+
+        private void PopulateVoiceMenu()
+        {
+            if (_voiceMenu == null) return;
+            _voiceMenu.DropDownItems.Clear();
+            if (_voiceOptions.Count == 0)
+            {
+                var empty = _voiceMenu.DropDownItems.Add("（未发现可用语音）");
+                empty.Enabled = false;
+                return;
+            }
+            foreach (var opt in _voiceOptions)
+            {
+                var item = new ToolStripMenuItem(opt.DisplayName) { Tag = opt };
+                item.Click += (s, e) => OnVoiceOptionClicked(opt);
+                _voiceMenu.DropDownItems.Add(item);
+            }
+            _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
+            var installItem = _voiceMenu.DropDownItems.Add("安装更多语音…");
+            installItem.Click += (s, e) => MessageBox.Show(
+                "Windows 设置 → 时间和语言 → 语音 → 添加语音，选中文（简体）。\n" +
+                "Microsoft Kangkang 为男声，Huihui / Yaoyao 为女声。\n" +
+                "安装后重启桌面助手，菜单里就会出现新语音。",
+                "安装更多语音", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            UpdateVoiceMenuChecks();
+        }
+
+        private void OnVoiceOptionClicked(VoiceEngine.VoiceOption opt)
+        {
+            if (_voice == null)
+            {
+                MessageBox.Show("语音引擎未初始化，无法切换。", "语音切换",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            _voice.ApplyVoice(opt);
+            _selectedVoiceKey = opt.Key;
+            VoiceSettings.SaveSelectedKey(_selectedVoiceKey);
+            UpdateVoiceMenuChecks();
+        }
+
+        private void UpdateVoiceMenuChecks()
+        {
+            if (_voiceMenu == null) return;
+            foreach (ToolStripMenuItem mi in _voiceMenu.DropDownItems)
+            {
+                if (mi.Tag is VoiceEngine.VoiceOption opt)
+                    mi.Checked = string.Equals(opt.Key, _selectedVoiceKey, StringComparison.Ordinal);
+            }
+        }
+
+        private void RestoreVoiceSelection()
+        {
+            string saved = VoiceSettings.LoadSelectedKey();
+            if (string.IsNullOrEmpty(saved)) return;
+            var opt = _voiceOptions.FirstOrDefault(o =>
+                string.Equals(o.Key, saved, StringComparison.Ordinal));
+            if (opt != null && _voice != null)
+            {
+                _voice.ApplyVoice(opt);
+                _selectedVoiceKey = opt.Key;
+            }
+            UpdateVoiceMenuChecks();
         }
 
         /// <summary>
@@ -1321,12 +1410,44 @@ namespace RailRouteAssistantDesktop
     }
 
     public class ScheduledStopData
-    {
-        public string Station;
-        public int Platform;
-        public double? ArrivalTimeSec;
-        public double? DepartureTimeSec;
-        public int StopMinutes;
-        public bool RelativeTimes;
+        {
+            public string Station;
+            public int Platform;
+            public double? ArrivalTimeSec;
+            public double? DepartureTimeSec;
+            public int StopMinutes;
+            public bool RelativeTimes;
+        }
     }
-}
+
+    /// <summary>语音包选择持久化：读写 %LOCALAPPDATA%\RailRouteAssistant\voice.json</summary>
+    public static class VoiceSettings
+    {
+        private static readonly string Dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RailRouteAssistant");
+        private static readonly string FilePath = Path.Combine(Dir, "voice.json");
+
+        public static string LoadSelectedKey()
+        {
+            try
+            {
+                if (!File.Exists(FilePath)) return null;
+                using var doc = JsonDocument.Parse(File.ReadAllText(FilePath));
+                return doc.RootElement.TryGetProperty("selectedVoiceKey", out var v) &&
+                    v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            }
+            catch { return null; }
+        }
+
+        public static void SaveSelectedKey(string key)
+        {
+            try
+            {
+                Directory.CreateDirectory(Dir);
+                File.WriteAllText(FilePath,
+                    JsonSerializer.Serialize(new { selectedVoiceKey = key }));
+            }
+            catch { /* 持久化失败不影响运行时切换 */ }
+        }
+    }
