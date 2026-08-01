@@ -27,6 +27,7 @@ namespace RailRouteAssistantDesktop
         private List<TrainData> _trains = new();
         private bool _gameReady = false;
         private string _gameTime = "";                  // 游戏内模拟时钟 HH:MM:SS
+        private bool _openingTrainDetails;
         private readonly HashSet<string> _selectedTrainNames = new();  // refresh 间保留的选中车号
 
         // ===== 语音播报 =====
@@ -673,9 +674,9 @@ namespace RailRouteAssistantDesktop
             }
         }
 
-        private void ShowTrainDetails(TrainData train)
+        private async void ShowTrainDetails(TrainData train)
         {
-            if (train == null) return;
+            if (train == null || _openingTrainDetails) return;
 
             string origin = "未知";
             string destination = "未知";
@@ -689,11 +690,34 @@ namespace RailRouteAssistantDesktop
                 _ = _trainInfo.EnsureResolvedAsync(train.Name);
             }
 
+            OnlineTrainDetails onlineDetails = null;
+            _openingTrainDetails = true;
+            UseWaitCursor = true;
+            try
+            {
+                onlineDetails = await _trainInfo.GetOnlineDetailsAsync(train.Name);
+                if (onlineDetails?.Stops.Count > 0)
+                {
+                    // 详情接口成功时优先使用当天实际运行图的首末站。
+                    origin = StripEnglishPrefix(onlineDetails.Stops[0].StationName);
+                    destination = StripEnglishPrefix(
+                        onlineDetails.Stops[onlineDetails.Stops.Count - 1].StationName);
+                }
+            }
+            finally
+            {
+                UseWaitCursor = false;
+                _openingTrainDetails = false;
+            }
+
+            if (IsDisposed) return;
+
             using var dialog = new TrainDetailsForm(
                 train.Name,
                 origin,
                 destination,
-                train.ScheduledStops);
+                train.ScheduledStops,
+                onlineDetails);
             dialog.ShowDialog(this);
         }
 

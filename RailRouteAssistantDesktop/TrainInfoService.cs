@@ -38,6 +38,54 @@ namespace RailRouteAssistantDesktop
         }
     }
 
+    /// <summary>12306 全程时刻表中的单个站点。</summary>
+    public sealed class OnlineTrainStop
+    {
+        public string StationNumber { get; }
+        public string StationName { get; }
+        public string ArrivalTime { get; }
+        public string DepartureTime { get; }
+        public string StopoverMinutes { get; }
+        public int DayDifference { get; }
+
+        public OnlineTrainStop(
+            string stationNumber,
+            string stationName,
+            string arrivalTime,
+            string departureTime,
+            string stopoverMinutes,
+            int dayDifference)
+        {
+            StationNumber = stationNumber;
+            StationName = stationName;
+            ArrivalTime = arrivalTime;
+            DepartureTime = departureTime;
+            StopoverMinutes = stopoverMinutes;
+            DayDifference = dayDifference;
+        }
+    }
+
+    /// <summary>按需从 12306 查询到的全程停站和车型信息。</summary>
+    public sealed class OnlineTrainDetails
+    {
+        public string Code { get; }
+        public string ServiceDate { get; }
+        public IReadOnlyList<string> VehicleModels { get; }
+        public IReadOnlyList<OnlineTrainStop> Stops { get; }
+
+        public OnlineTrainDetails(
+            string code,
+            string serviceDate,
+            IReadOnlyList<string> vehicleModels,
+            IReadOnlyList<OnlineTrainStop> stops)
+        {
+            Code = code;
+            ServiceDate = serviceDate;
+            VehicleModels = vehicleModels ?? Array.Empty<string>();
+            Stops = stops ?? Array.Empty<OnlineTrainStop>();
+        }
+    }
+
     /// <summary>
     /// 车次始发终到查询服务。
     ///
@@ -49,6 +97,8 @@ namespace RailRouteAssistantDesktop
     public sealed class TrainInfoService : IDisposable
     {
         private const string OnlineSearchUrl = "https://search.12306.cn/search/v1/train/search";
+        private const string OnlineDetailsUrl =
+            "https://mobile.12306.cn/wxxcx/wechat/main/travelServiceQrcodeTrainInfo";
         private const int MaxConcurrentRequests = 3;
         private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
 
@@ -64,9 +114,15 @@ namespace RailRouteAssistantDesktop
             new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, Lazy<Task>> _inFlight =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, OnlineTrainDetails> _onlineDetails =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, Lazy<Task<OnlineTrainDetails>>> _detailsInFlight =
+            new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAfterUtc =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _requestGate = new(MaxConcurrentRequests, MaxConcurrentRequests);
+        // 详情查询由用户点击触发，不能排在数百个列表预加载请求之后。
+        private readonly SemaphoreSlim _detailsRequestGate = new(2, 2);
         private readonly SemaphoreSlim _cacheFileGate = new(1, 1);
         private readonly CancellationTokenSource _shutdown = new();
 
@@ -160,6 +216,150 @@ namespace RailRouteAssistantDesktop
                     () => ResolveOnlineAsync(key),
                     LazyThreadSafetyMode.ExecutionAndPublication));
             return work.Value;
+        }
+
+        /// <summary>
+        /// 按需查询 12306 全程停站及车型。同一车次在同一运行图日期内只请求一次，
+        /// 失败不缓存，以便用户稍后重新打开详情时重试。
+        /// </summary>
+        public Task<OnlineTrainDetails> GetOnlineDetailsAsync(string code)
+        {
+            code = NormalizeCode(code);
+            if (string.IsNullOrEmpty(code) || Volatile.Read(ref _disposed) == 1)
+                return Task.FromResult<OnlineTrainDetails>(null);
+
+            string serviceDate = GetServiceDate();
+            if (_onlineDetails.TryGetValue(code, out var cached) &&
+                string.Equals(cached.ServiceDate, serviceDate, StringComparison.Ordinal))
+                return Task.FromResult(cached);
+
+            var work = _detailsInFlight.GetOrAdd(
+                code,
+                key => new Lazy<Task<OnlineTrainDetails>>(
+                    () => ResolveOnlineDetailsAsync(key, serviceDate),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
+            return work.Value;
+        }
+
+        private async Task<OnlineTrainDetails> ResolveOnlineDetailsAsync(string code, string serviceDate)
+        {
+            try
+            {
+                await _detailsRequestGate.WaitAsync(_shutdown.Token).ConfigureAwait(false);
+                try
+                {
+                    if (_onlineDetails.TryGetValue(code, out var cached) &&
+                        string.Equals(cached.ServiceDate, serviceDate, StringComparison.Ordinal))
+                        return cached;
+
+                    var details = await QueryOnlineDetailsAsync(code, serviceDate, _shutdown.Token)
+                        .ConfigureAwait(false);
+                    if (details == null) return null;
+
+                    _onlineDetails[code] = details;
+
+                    // 详情接口也能可靠给出首末站；搜索接口暂时不可用时仍更新主列表。
+                    if (details.Stops.Count > 0)
+                    {
+                        _online[code] = new CachedTrainInfo
+                        {
+                            Code = code,
+                            Origin = details.Stops[0].StationName,
+                            Destination = details.Stops[details.Stops.Count - 1].StationName,
+                            ServiceDate = serviceDate,
+                            ResolvedAtUtc = DateTimeOffset.UtcNow
+                        };
+                        await SaveOnlineCacheAsync(_shutdown.Token).ConfigureAwait(false);
+                    }
+
+                    return details;
+                }
+                finally
+                {
+                    _detailsRequestGate.Release();
+                }
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                _detailsInFlight.TryRemove(code, out _);
+            }
+        }
+
+        private async Task<OnlineTrainDetails> QueryOnlineDetailsAsync(
+            string code,
+            string serviceDate,
+            CancellationToken cancellationToken)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, OnlineDetailsUrl);
+            request.Headers.UserAgent.ParseAdd("RailRouteHelper/1.0");
+            request.Headers.Accept.ParseAdd("application/json");
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["trainCode"] = code,
+                // 该移动端接口要求 yyyyMMdd；带连字符会返回空的 trainDetail。
+                ["startDay"] = serviceDate
+            });
+
+            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            requestTimeout.CancelAfter(TimeSpan.FromSeconds(8));
+            using var response = await _http.SendAsync(request, requestTimeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+
+            string text = await response.Content.ReadAsStringAsync(requestTimeout.Token)
+                .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            using var document = JsonDocument.Parse(text);
+            if (!document.RootElement.TryGetProperty("data", out var data) ||
+                data.ValueKind != JsonValueKind.Object ||
+                !data.TryGetProperty("trainDetail", out var trainDetail) ||
+                trainDetail.ValueKind != JsonValueKind.Object ||
+                !trainDetail.TryGetProperty("stopTime", out var stopTime) ||
+                stopTime.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var stops = new List<OnlineTrainStop>();
+            var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (trainDetail.TryGetProperty("trainsetTypeInfo", out var trainsetTypeInfo) &&
+                trainsetTypeInfo.ValueKind == JsonValueKind.Object)
+            {
+                AddVehicleModel(models, ReadString(trainsetTypeInfo, "indexKey"));
+                AddVehicleModel(models, ReadString(trainsetTypeInfo, "trainsetTypeName"));
+                AddVehicleModel(models, ReadString(trainsetTypeInfo, "trainsetType"));
+            }
+
+            foreach (var item in stopTime.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                string stationName = ReadString(item, "stationName") ??
+                    ReadString(item, "station_name");
+                if (string.IsNullOrWhiteSpace(stationName)) continue;
+
+                stops.Add(new OnlineTrainStop(
+                    ReadString(item, "stationNo") ?? ReadString(item, "station_no"),
+                    stationName.Trim(),
+                    ReadString(item, "arriveTime") ?? ReadString(item, "arrive_time"),
+                    ReadString(item, "startTime") ?? ReadString(item, "start_time"),
+                    ReadString(item, "stopover_time"),
+                    ReadInt(item, "dayDifference")));
+
+                // train_style 常见形态为 CRH380D_554H，尾段是具体车组号；
+                // jiaolu_train_style 则通常直接是 CRH2C2、25K 等交路车型。
+                AddVehicleModel(models, NormalizeActualVehicleModel(ReadString(item, "train_style")));
+                AddVehicleModel(models, ReadString(item, "jiaolu_train_style"));
+            }
+
+            if (stops.Count == 0) return null;
+            return new OnlineTrainDetails(code, serviceDate, models.ToArray(), stops);
         }
 
         private async Task ResolveOnlineAsync(string code)
@@ -462,6 +662,44 @@ namespace RailRouteAssistantDesktop
             return !string.IsNullOrWhiteSpace(value);
         }
 
+        private static string ReadString(JsonElement item, string propertyName)
+        {
+            return item.TryGetProperty(propertyName, out var property) &&
+                property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+        }
+
+        private static int ReadInt(JsonElement item, string propertyName)
+        {
+            if (!item.TryGetProperty(propertyName, out var property)) return 0;
+            if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out int number))
+                return number;
+            return property.ValueKind == JsonValueKind.String &&
+                int.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
+                ? number
+                : 0;
+        }
+
+        private static void AddVehicleModel(ISet<string> models, string value)
+        {
+            value = value?.Trim();
+            if (!string.IsNullOrEmpty(value) && value != "--") models.Add(value);
+        }
+
+        private static string NormalizeActualVehicleModel(string value)
+        {
+            value = value?.Trim();
+            if (string.IsNullOrEmpty(value)) return value;
+
+            int separator = value.LastIndexOf('_');
+            if (separator <= 0 || separator == value.Length - 1) return value;
+            string unitNumber = value.Substring(separator + 1);
+            return unitNumber.All(char.IsLetterOrDigit)
+                ? value.Substring(0, separator)
+                : value;
+        }
+
         private static string NormalizeCode(string code)
         {
             if (string.IsNullOrWhiteSpace(code)) return null;
@@ -471,6 +709,10 @@ namespace RailRouteAssistantDesktop
                 .ToArray())
                 .Trim()
                 .ToUpperInvariant();
+            // 部分游戏地图用“通”标记通过列车。显示和播报保留原车号，
+            // 仅在查询 12306/离线库时移除该地图专用前缀。
+            if (normalized.Length > 1 && normalized[0] == '通')
+                normalized = normalized.Substring(1);
             return string.IsNullOrEmpty(normalized) ? null : normalized;
         }
 
