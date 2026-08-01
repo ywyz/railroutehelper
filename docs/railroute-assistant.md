@@ -179,7 +179,8 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 ### 桌面程序 UI
 
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
-- **搜索框**：输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
+- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.4.1`；若标题没有版本号，说明启动的是旧版 EXE
+- **搜索框**：位于“所有列车”标题下方；输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
 列车列表列：`车号 | 始发 | 终到 | km/h | 延误 | 信号 | 状态 | 前方停站 | 站台`
@@ -214,8 +215,14 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 
 ### 车次详情弹窗
 
-双击列车列表中的车次，打开只读详情弹窗。弹窗顶部显示车次、始发站和终点站；
-下方表格按游戏 `ScheduledVisits` 顺序显示当前地图内的停车站点：
+可以通过以下任一种方式打开只读车次详情弹窗：
+
+- 双击列车列表中的车次；
+- 选中车次后按 `Enter`；
+- 在列车行上右键，选择“查看车次详情（双击）”。
+
+弹窗顶部显示车次、始发站和终点站；下方表格按游戏 `ScheduledVisits`
+顺序显示当前地图内的停车站点：
 
 `序号 | 停车站点 | 站台 | 到站时间 | 发车时间 | 停车间隔`
 
@@ -236,6 +243,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 ### 右键菜单
 
 在列车列表或告警列表上右键，可：
+- **查看车次详情（双击）**：在列车列表中打开当前选中车次的始发、终到和计划停车表。
 - **复制选中行**：复制当前选中的行（Tab 分隔，可粘贴到 Excel）。右键点击时会自动选中点击的行，并通过 `_lastRightClickedList` 记录操作的列表，避免 `Focused` 判断不准导致无反应。
 - **复制全部列车数据**：复制全部列车数据（含表头）
 
