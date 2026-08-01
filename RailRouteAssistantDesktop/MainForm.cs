@@ -46,6 +46,15 @@ namespace RailRouteAssistantDesktop
         private static readonly Color ColorPanel = Color.FromArgb(20, 20, 25);
         private static readonly Color ColorDim = Color.FromArgb(100, 100, 100);
 
+        private static string DisplayVersion
+        {
+            get
+            {
+                Version version = typeof(MainForm).Assembly.GetName().Version;
+                return version == null ? "未知" : $"{version.Major}.{version.Minor}.{version.Build}";
+            }
+        }
+
         public MainForm()
         {
             _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
@@ -75,7 +84,8 @@ namespace RailRouteAssistantDesktop
 
         private void SetupUI()
         {
-            Text = "Rail Route 调度助手";
+            // 把版本直接放在标题栏，方便确认当前启动的是否为最新程序。
+            Text = $"Rail Route 调度助手 v{DisplayVersion}";
             Width = 540;
             Height = 700;
             StartPosition = FormStartPosition.Manual;
@@ -117,7 +127,7 @@ namespace RailRouteAssistantDesktop
             var trainHeader = new Label
             {
                 Dock = DockStyle.Top, Height = 22,
-                Text = "  所有列车",
+                Text = "  所有列车（双击或选中后按回车查看详情）",
                 ForeColor = Color.LightSkyBlue, BackColor = ColorPanel,
                 Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold)
             };
@@ -221,6 +231,11 @@ namespace RailRouteAssistantDesktop
 
             // 右键菜单 - 复制
             var copyMenu = new ContextMenuStrip();
+            var detailsItem = new ToolStripMenuItem("查看车次详情（双击）");
+            detailsItem.Click += (s, e) => ShowSelectedTrainDetails();
+            copyMenu.Items.Add(detailsItem);
+            copyMenu.Items.Add(new ToolStripSeparator());
+
             var copyItem = new ToolStripMenuItem("复制选中行");
             copyItem.Click += (s, e) => CopySelectedToClipboard();
             copyMenu.Items.Add(copyItem);
@@ -283,13 +298,8 @@ namespace RailRouteAssistantDesktop
                 SelectTrainInList(firstName);
             };
 
-            // 双击列车行 -> 显示始发、终到和当前地图内的完整计划停车表。
-            _trainList.MouseDoubleClick += (s, e) =>
-            {
-                var hit = _trainList.HitTest(e.Location);
-                if (hit?.Item?.Tag is TrainData train)
-                    ShowTrainDetails(train);
-            };
+            // ItemActivate 同时覆盖鼠标双击和选中行后按回车，比坐标命中判断更可靠。
+            _trainList.ItemActivate += (s, e) => ShowSelectedTrainDetails();
 
             // 失去焦点时恢复置顶（避免被游戏窗口盖住）
             Deactivate += (s, e) =>
@@ -652,6 +662,15 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add(""); // 站台
             UpdateTrainItem(item, t);
             return item;
+        }
+
+        private void ShowSelectedTrainDetails()
+        {
+            if (_trainList?.SelectedItems.Count > 0 &&
+                _trainList.SelectedItems[0].Tag is TrainData train)
+            {
+                ShowTrainDetails(train);
+            }
         }
 
         private void ShowTrainDetails(TrainData train)
