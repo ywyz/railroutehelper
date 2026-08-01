@@ -479,7 +479,9 @@ namespace RailRouteAssistantDesktop
                             NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
                             NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null,
                             SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
-                            FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1
+                            FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1,
+                            MapEntryTimeSec = t.TryGetProperty("mapEntryTimeSec", out var me) && me.ValueKind == JsonValueKind.Number ? me.GetDouble() : null,
+                            MapExitTimeSec = t.TryGetProperty("mapExitTimeSec", out var mx) && mx.ValueKind == JsonValueKind.Number ? mx.GetDouble() : null
                         };
 
                         if (t.TryGetProperty("scheduledStops", out var stopsEl) && stopsEl.ValueKind == JsonValueKind.Array)
@@ -717,7 +719,9 @@ namespace RailRouteAssistantDesktop
                 origin,
                 destination,
                 train.ScheduledStops,
-                onlineDetails);
+                onlineDetails,
+                train.MapEntryTimeSec,
+                train.MapExitTimeSec);
             dialog.ShowDialog(this);
         }
 
@@ -1095,7 +1099,8 @@ namespace RailRouteAssistantDesktop
                     StopMinutes = stop.StopMinutes,
                     RelativeTimes = stop.RelativeTimes
                 }).ToList(),
-                NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince
+                NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince,
+                MapEntryTimeSec = t.MapEntryTimeSec, MapExitTimeSec = t.MapExitTimeSec
             };
         }
 
@@ -1311,6 +1316,8 @@ namespace RailRouteAssistantDesktop
         public double? NextPrepareSec;  // 下一交路准备剩余秒数（不用于当前停站倒计时）
         public double? NextArrivalSec;  // 距到达剩余秒数
         public double? NotMovingSince;  // 停车时长（秒）
+        public double? MapEntryTimeSec;  // 列车进入地图的计划时刻（游戏内绝对秒数）
+        public double? MapExitTimeSec;   // 列车离开地图的计划时刻（游戏内绝对秒数）
     }
 
     public class ScheduledStopData

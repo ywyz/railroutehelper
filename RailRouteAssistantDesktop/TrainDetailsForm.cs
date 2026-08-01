@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace RailRouteAssistantDesktop
 {
-    /// <summary>列车详情只读弹窗：始发终到 + 当前游戏地图内的计划停车表。</summary>
+    /// <summary>列车详情只读弹窗：始发终到 + 地图进出时刻 + 当前游戏地图内的计划停车表。</summary>
     internal sealed class TrainDetailsForm : Form
     {
         private static readonly Color ColorBg = Color.FromArgb(30, 30, 35);
@@ -18,11 +18,13 @@ namespace RailRouteAssistantDesktop
             string origin,
             string destination,
             IReadOnlyList<ScheduledStopData> stops,
-            OnlineTrainDetails onlineDetails)
+            OnlineTrainDetails onlineDetails,
+            double? mapEntryTimeSec,
+            double? mapExitTimeSec)
         {
             Text = $"{trainCode} 车次详情";
             Width = 760;
-            Height = 550;
+            Height = 580;
             MinimumSize = new Size(650, 380);
             StartPosition = FormStartPosition.CenterParent;
             ShowInTaskbar = false;
@@ -34,7 +36,7 @@ namespace RailRouteAssistantDesktop
             var header = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 112,
+                Height = 140,
                 BackColor = ColorPanel,
                 Padding = new Padding(14, 8, 14, 6)
             };
@@ -66,6 +68,15 @@ namespace RailRouteAssistantDesktop
                 ForeColor = onlineDetails?.VehicleModels.Count > 0 ? Color.LightGreen : Color.Gray,
                 TextAlign = ContentAlignment.MiddleLeft
             };
+            var mapTimes = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 24,
+                Text = $"进入地图：{FormatMapTime(mapEntryTimeSec)}    离开地图：{FormatMapTime(mapExitTimeSec)}",
+                ForeColor = Color.Khaki,
+                Font = new Font("Microsoft YaHei UI", 9F),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
             var subtitle = new Label
             {
                 Dock = DockStyle.Fill,
@@ -74,6 +85,7 @@ namespace RailRouteAssistantDesktop
                 TextAlign = ContentAlignment.MiddleLeft
             };
             header.Controls.Add(subtitle);
+            header.Controls.Add(mapTimes);
             header.Controls.Add(vehicleModels);
             header.Controls.Add(route);
             header.Controls.Add(title);
@@ -87,11 +99,6 @@ namespace RailRouteAssistantDesktop
                 Height = 50,
                 BackColor = ColorPanel,
                 Padding = new Padding(12, 8, 12, 8)
-            };
-            var note = new Label
-            {
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft
             };
             var closeButton = new Button
             {
@@ -114,9 +121,32 @@ namespace RailRouteAssistantDesktop
             };
             closeButton.FlatAppearance.BorderColor = Color.FromArgb(80, 110, 140);
             toggleButton.FlatAppearance.BorderColor = Color.FromArgb(75, 125, 95);
+
+            // note 不使用 Dock=Fill——Fill 标签在 z-order 前端会遮盖右侧按钮的点击。
+            // 改用 Anchor 让标签宽度跟随面板缩放，不参与 dock 布局，彻底避免遮盖。
+            var note = new Label
+            {
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
+                BackColor = ColorPanel,
+                ForeColor = Color.Gray,
+                Font = new Font("Microsoft YaHei UI", 8.5F),
+                Location = new Point(12, 14),
+                Size = new Size(300, 20),
+                Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right
+            };
+
+            // 先添加 note（不参与 dock），再添加按钮（Right dock）。
+            // dock 布局只处理按钮，note 由 Anchor 定位，三者互不遮盖。
             footer.Controls.Add(note);
             footer.Controls.Add(closeButton);
             footer.Controls.Add(toggleButton);
+            footer.Resize += (s, e) =>
+            {
+                // 按钮总宽 = 148 + 82 = 230，加上间距和 padding 后 note 右边界不超过此值
+                int buttonZone = 230 + 12 + 6;
+                note.Width = Math.Max(50, footer.Width - 12 - buttonZone);
+            };
 
             bool showingOnline = false;
             void ShowGameSchedule()
@@ -161,6 +191,8 @@ namespace RailRouteAssistantDesktop
                 if (showingOnline) ShowGameSchedule();
                 else ShowOnlineSchedule();
             };
+
+            closeButton.Click += (sender, args) => Close();
 
             ShowGameSchedule();
 
@@ -269,6 +301,14 @@ namespace RailRouteAssistantDesktop
             int hours = relative ? (int)time.TotalHours : time.Hours;
             string value = $"{hours:00}:{time.Minutes:00}:{time.Seconds:00}";
             return relative ? "+" + value : value;
+        }
+
+        /// <summary>将游戏内绝对秒数格式化为 24h HH:MM:SS（地图进出时刻）</summary>
+        private static string FormatMapTime(double? seconds)
+        {
+            if (!seconds.HasValue || seconds.Value < 0) return "--";
+            var time = TimeSpan.FromSeconds(seconds.Value);
+            return $"{time.Hours:00}:{time.Minutes:00}:{time.Seconds:00}";
         }
 
         private static string FormatStopInterval(ScheduledStopData stop)

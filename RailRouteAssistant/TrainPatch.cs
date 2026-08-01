@@ -1022,10 +1022,14 @@ namespace RailRouteAssistant
                 if (visits == null) return;
 
                 int total = 0;
+                object firstVisit = null;
+                object lastVisit = null;
                 foreach (var visit in visits)
                 {
                     total++;
                     if (visit == null) continue;
+                    if (firstVisit == null) firstVisit = visit;
+                    lastVisit = visit;
 
                     ReadStationVisit(visit, out var station, out var platform, out var nonStop,
                         out var stopMinutes, out var arrivalTime, out var departureTime,
@@ -1052,6 +1056,13 @@ namespace RailRouteAssistant
                 }
 
                 snap.ScheduledVisitCount = total;
+
+                // 列车进入/离开地图的计划时刻：取首个访问的 From（到达）和末个访问的 To（发车）。
+                // 含通过站——列车可能从通过站进入或离开地图。
+                if (firstVisit != null)
+                    snap.MapEntryGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(firstVisit));
+                if (lastVisit != null)
+                    snap.MapExitGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(lastVisit));
             }
             catch (Exception ex)
             {

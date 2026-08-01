@@ -190,7 +190,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 ### 桌面程序 UI
 
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
-- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.4.1`；若标题没有版本号，说明启动的是旧版 EXE
+- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.5.1`；若标题没有版本号，说明启动的是旧版 EXE
 - **搜索框**：位于“所有列车”标题下方；输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
@@ -232,7 +232,7 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 - 选中车次后按 `Enter`；
 - 在列车行上右键，选择“查看车次详情（双击）”。
 
-弹窗顶部显示车次、始发站、终点站，以及 12306 当天能够提供的全部车型。下方默认
+弹窗顶部显示车次、始发站、终点站、列车进入/离开地图的计划时刻，以及 12306 当天能够提供的全部车型。下方默认
 按游戏 `ScheduledVisits` 顺序显示当前地图内的停车站点：
 
 `序号 | 停车站点 | 站台 | 到站时间 | 发车时间 | 停车间隔`
@@ -377,7 +377,9 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
       "stopReasons": "",
       "nextPrepareSec": 150,
       "nextArrivalSec": 300,
-      "notMovingSince": null
+      "notMovingSince": null,
+      "mapEntryTimeSec": 52200,
+      "mapExitTimeSec": 54000
     }
   ],
   "alerts": [
@@ -404,6 +406,8 @@ dotnet run --project tools\ExportLulutongTrainRoutes\ExportLulutongTrainRoutes.c
 | `nextPrepareSec` | number \| null | 下一站发车准备剩余秒数（停站时为发车倒计时，等待入图时为入图倒计时） |
 | `nextArrivalSec` | number \| null | 下一站到达剩余秒数 |
 | `notMovingSince` | number \| null | 列车停车起始 unix 时间戳（秒），桌面端据此计算"已停 X 分 Y 秒" |
+| `mapEntryTimeSec` | number \| null | 列车进入当前游戏地图的计划时刻（游戏内绝对秒数），取自首个 `StationVisit.From`（含通过站） |
+| `mapExitTimeSec` | number \| null | 列车离开当前游戏地图的计划时刻（游戏内绝对秒数），取自末个 `StationVisit.To`（含通过站） |
 
 ## 日志
 

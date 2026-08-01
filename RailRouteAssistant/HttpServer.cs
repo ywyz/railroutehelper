@@ -167,7 +167,9 @@ namespace RailRouteAssistant
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
                 sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
                 sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
-                sb.Append("\"notMovingSince\":").Append(s.NotMovingDuration.HasValue ? s.NotMovingDuration.Value.ToString("F0") : "null");
+                sb.Append("\"notMovingSince\":").Append(s.NotMovingDuration.HasValue ? s.NotMovingDuration.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"mapEntryTimeSec\":").Append(s.MapEntryGameTimeSeconds.HasValue ? s.MapEntryGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
+                sb.Append("\"mapExitTimeSec\":").Append(s.MapExitGameTimeSeconds.HasValue ? s.MapExitGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null");
                 sb.Append("}");
             }
             sb.Append("],");
