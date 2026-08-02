@@ -144,7 +144,8 @@ namespace RailRouteAssistant
                     sb.Append("\"arrivalTimeSec\":").Append(stop.ArrivalGameTimeSeconds.HasValue ? stop.ArrivalGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                     sb.Append("\"departureTimeSec\":").Append(stop.DepartureGameTimeSeconds.HasValue ? stop.DepartureGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                     sb.Append("\"stopMinutes\":").Append(stop.StopDurationMinutes).Append(",");
-                    sb.Append("\"relativeTimes\":").Append(stop.RelativeTimes.ToString().ToLower());
+                    sb.Append("\"relativeTimes\":").Append(stop.RelativeTimes.ToString().ToLower()).Append(",");
+                    sb.Append("\"nonStop\":").Append(stop.NonStop.ToString().ToLower());
                     sb.Append("}");
                 }
                 sb.Append("],");
@@ -171,7 +172,11 @@ namespace RailRouteAssistant
                 sb.Append("\"mapEntryTimeSec\":").Append(s.MapEntryGameTimeSeconds.HasValue ? s.MapEntryGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"mapExitTimeSec\":").Append(s.MapExitGameTimeSeconds.HasValue ? s.MapExitGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"mapEntryStation\":").Append(JsonStr(s.MapEntryStationName ?? "")).Append(",");
-                sb.Append("\"mapExitStation\":").Append(JsonStr(s.MapExitStationName ?? ""));
+                sb.Append("\"mapExitStation\":").Append(JsonStr(s.MapExitStationName ?? "")).Append(",");
+                sb.Append("\"mapEntryPlatform\":").Append(s.MapEntryPlatformNumber).Append(",");
+                sb.Append("\"mapExitPlatform\":").Append(s.MapExitPlatformNumber).Append(",");
+                sb.Append("\"mapEntryNonStop\":").Append(s.MapEntryNonStop.ToString().ToLower()).Append(",");
+                sb.Append("\"mapExitNonStop\":").Append(s.MapExitNonStop.ToString().ToLower());
                 sb.Append("}");
             }
             sb.Append("],");

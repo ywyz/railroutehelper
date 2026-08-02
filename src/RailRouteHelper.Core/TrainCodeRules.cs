@@ -10,6 +10,9 @@ public static class TrainCodeRules
     private static readonly Regex CompositeCodePattern = new(
         @"^((?:0)?[A-Z]{1,2}\d+)([A-Z]{1,2}\d+)$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex SlashCompositeCodePattern = new(
+        @"^((?:0)?[A-Z]{1,2}\d+)/((?:0)?[A-Z]{1,2}\d+)$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
     /// 生成用于 12306 和离线车次库查询的编号。显示及播报仍保留地图原始编号。
@@ -29,7 +32,7 @@ public static class TrainCodeRules
     }
 
     /// <summary>
-    /// 拆分地图复合车次，例如 G6642G6641、0G6642G6641、DJ8598G3401。
+    /// 拆分地图复合车次，例如 G6642G6641、DJ8598G3401、0G1703/G1704、0Y2/Y1。
     /// </summary>
     public static bool TrySplitCompositeCode(string? code, out string? firstLeg, out string? secondLeg)
     {
@@ -37,6 +40,20 @@ public static class TrainCodeRules
         secondLeg = null;
         string? normalized = NormalizeDisplayCode(code);
         if (string.IsNullOrEmpty(normalized)) return false;
+
+        Match slashMatch = SlashCompositeCodePattern.Match(normalized);
+        if (slashMatch.Success)
+        {
+            firstLeg = slashMatch.Groups[1].Value;
+            secondLeg = slashMatch.Groups[2].Value;
+
+            // 秦皇岛地图的 Y 字头是地图内游车编号，斜杠后会省略共同的地图前导 0。
+            // 普通国铁车次（如 0G1703/G1704）不继承这个 0。
+            if (firstLeg.StartsWith("0Y", StringComparison.Ordinal) &&
+                secondLeg.StartsWith("Y", StringComparison.Ordinal))
+                secondLeg = "0" + secondLeg;
+            return true;
+        }
 
         Match match = CompositeCodePattern.Match(normalized);
         if (!match.Success) return false;

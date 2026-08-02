@@ -22,7 +22,11 @@ namespace RailRouteAssistantDesktop
             double? mapEntryTimeSec,
             double? mapExitTimeSec,
             string mapEntryStation,
-            string mapExitStation)
+            string mapExitStation,
+            int mapEntryPlatform,
+            int mapExitPlatform,
+            bool mapEntryNonStop,
+            bool mapExitNonStop)
         {
             Text = $"{trainCode} 车次详情";
             Width = 760;
@@ -74,7 +78,8 @@ namespace RailRouteAssistantDesktop
             {
                 Dock = DockStyle.Top,
                 Height = 24,
-                Text = $"进入地图：{DisplayStation(mapEntryStation)} {FormatMapTime(mapEntryTimeSec)}    离开地图：{DisplayStation(mapExitStation)} {FormatMapTime(mapExitTimeSec)}",
+                Text = $"游戏中起点站：{FormatMapEndpoint(mapEntryStation, mapEntryPlatform, mapEntryNonStop)} {FormatMapTime(mapEntryTimeSec)}    " +
+                    $"游戏中终点站：{FormatMapEndpoint(mapExitStation, mapExitPlatform, mapExitNonStop)} {FormatMapTime(mapExitTimeSec)}",
                 ForeColor = Color.Khaki,
                 Font = new Font("Microsoft YaHei UI", 9F),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -216,7 +221,7 @@ namespace RailRouteAssistantDesktop
             {
                 grid.Rows.Add(
                     sequence++,
-                    StripEnglishPrefix(stop.Station),
+                    FormatGameStation(stop),
                     stop.Platform > 0 ? $"{stop.Platform}道" : "--",
                     FormatScheduleTime(stop.ArrivalTimeSec, stop.RelativeTimes),
                     FormatScheduleTime(stop.DepartureTimeSec, stop.RelativeTimes),
@@ -363,15 +368,24 @@ namespace RailRouteAssistantDesktop
         private static string DisplayStation(string value) =>
             string.IsNullOrWhiteSpace(value) ? "" : StripEnglishPrefix(value);
 
-        private static string StripEnglishPrefix(string station)
+        private static string FormatGameStation(ScheduledStopData stop)
         {
-            if (string.IsNullOrEmpty(station)) return "--";
-            for (int i = 0; i < station.Length; i++)
-            {
-                char c = station[i];
-                if (c >= '\u4e00' && c <= '\u9fff') return station.Substring(i);
-            }
-            return station;
+            string station = DisplayStation(stop.Station);
+            return stop.NonStop && !station.EndsWith("（通过）", StringComparison.Ordinal)
+                ? station + "（通过）"
+                : station;
         }
+
+        private static string FormatMapEndpoint(string station, int platform, bool nonStop)
+        {
+            string value = DisplayStation(station);
+            if (string.IsNullOrEmpty(value)) return "--";
+            if (nonStop) value += "（通过）";
+            if (platform > 0) value += $"{platform}道";
+            return value;
+        }
+
+        private static string StripEnglishPrefix(string station) =>
+            StationNameFormatter.ChineseOrOriginal(station) ?? "--";
     }
 }

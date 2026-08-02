@@ -1010,9 +1010,8 @@ namespace RailRouteAssistant
         }
 
         /// <summary>
-        /// 采集当前地图内 ScheduledVisits 中的停车站。通过站（NonStop=true）不属于
-        /// “停车站点”，因此不输出；RelativeTimes 仍保留原始相对时刻供 UI 标注显示，
-        /// 但不会被其他逻辑当成绝对游戏时钟使用。
+        /// 采集当前地图内 ScheduledVisits 的完整访问序列。通过站也输出，并统一为
+        /// 到发时刻相同、停车间隔 0；RelativeTimes 仍保留原始相对时刻供 UI 标注显示。
         /// </summary>
         private static void CollectScheduledStops(object train, TrainSnapshot snap)
         {
@@ -1034,14 +1033,21 @@ namespace RailRouteAssistant
                     ReadStationVisit(visit, out var station, out var platform, out var nonStop,
                         out var stopMinutes, out var arrivalTime, out var departureTime,
                         out var relativeTimes, out _);
-                    if (nonStop) continue;
-
                     // ReadStationVisit 对相对时刻有意返回 null，防止运行逻辑误用；详情表只做
                     // 展示，因此在这里单独读取原始 From/To，并显式携带 RelativeTimes 标志。
                     if (relativeTimes)
                     {
                         arrivalTime = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(visit));
                         departureTime = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(visit));
+                    }
+
+                    // 通过站没有停车过程。部分地图仍给了不同的 From/To，详情表按业务语义
+                    // 统一显示为同一时刻和 0 分钟，避免被误认为停车站。
+                    if (nonStop)
+                    {
+                        departureTime = arrivalTime ?? departureTime;
+                        arrivalTime = departureTime;
+                        stopMinutes = 0;
                     }
 
                     snap.ScheduledStops.Add(new ScheduledStopSnapshot
@@ -1051,7 +1057,8 @@ namespace RailRouteAssistant
                         ArrivalGameTimeSeconds = arrivalTime,
                         DepartureGameTimeSeconds = departureTime,
                         StopDurationMinutes = stopMinutes,
-                        RelativeTimes = relativeTimes
+                        RelativeTimes = relativeTimes,
+                        NonStop = nonStop
                     });
                 }
 
@@ -1062,14 +1069,18 @@ namespace RailRouteAssistant
                 if (firstVisit != null)
                 {
                     snap.MapEntryGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitFrom?.GetValue(firstVisit));
-                    ReadStationVisit(firstVisit, out var entryStation, out _, out _, out _, out _, out _, out _, out _);
+                    ReadStationVisit(firstVisit, out var entryStation, out var entryPlatform, out var entryNonStop, out _, out _, out _, out _, out _);
                     snap.MapEntryStationName = entryStation ?? "";
+                    snap.MapEntryPlatformNumber = entryPlatform;
+                    snap.MapEntryNonStop = entryNonStop;
                 }
                 if (lastVisit != null)
                 {
                     snap.MapExitGameTimeSeconds = GetTimeSpanTotalSeconds(ReflectCache.VisitTo?.GetValue(lastVisit));
-                    ReadStationVisit(lastVisit, out var exitStation, out _, out _, out _, out _, out _, out _, out _);
+                    ReadStationVisit(lastVisit, out var exitStation, out var exitPlatform, out var exitNonStop, out _, out _, out _, out _, out _);
                     snap.MapExitStationName = exitStation ?? "";
+                    snap.MapExitPlatformNumber = exitPlatform;
+                    snap.MapExitNonStop = exitNonStop;
                 }
             }
             catch (Exception ex)

@@ -46,6 +46,7 @@ namespace RailRouteAssistantDesktop
         private readonly Dictionary<string, DateTime> _lastAnnounce = new();
         private const double AnnounceCooldownSec = 30.0;  // 同车号同类型 30 秒内不重复
         private const double PreDepartureAnnouncementSeconds = 60.0;
+        private const double PrePassingAnnouncementSeconds = 180.0;
 
         private static readonly Color ColorCritical = Color.FromArgb(220, 50, 50);
         private static readonly Color ColorWarning = Color.FromArgb(230, 150, 30);
@@ -643,7 +644,11 @@ namespace RailRouteAssistantDesktop
                             MapEntryTimeSec = t.TryGetProperty("mapEntryTimeSec", out var me) && me.ValueKind == JsonValueKind.Number ? me.GetDouble() : null,
                             MapExitTimeSec = t.TryGetProperty("mapExitTimeSec", out var mx) && mx.ValueKind == JsonValueKind.Number ? mx.GetDouble() : null,
                             MapEntryStation = t.TryGetProperty("mapEntryStation", out var mes) && mes.ValueKind == JsonValueKind.String ? mes.GetString() ?? "" : "",
-                            MapExitStation = t.TryGetProperty("mapExitStation", out var mxs) && mxs.ValueKind == JsonValueKind.String ? mxs.GetString() ?? "" : ""
+                            MapExitStation = t.TryGetProperty("mapExitStation", out var mxs) && mxs.ValueKind == JsonValueKind.String ? mxs.GetString() ?? "" : "",
+                            MapEntryPlatform = t.TryGetProperty("mapEntryPlatform", out var mep) && mep.ValueKind == JsonValueKind.Number ? mep.GetInt32() : 0,
+                            MapExitPlatform = t.TryGetProperty("mapExitPlatform", out var mxp) && mxp.ValueKind == JsonValueKind.Number ? mxp.GetInt32() : 0,
+                            MapEntryNonStop = t.TryGetProperty("mapEntryNonStop", out var mens) && mens.ValueKind is JsonValueKind.True or JsonValueKind.False && mens.GetBoolean(),
+                            MapExitNonStop = t.TryGetProperty("mapExitNonStop", out var mxns) && mxns.ValueKind is JsonValueKind.True or JsonValueKind.False && mxns.GetBoolean()
                         };
 
                         if (t.TryGetProperty("scheduledStops", out var stopsEl) && stopsEl.ValueKind == JsonValueKind.Array)
@@ -657,7 +662,8 @@ namespace RailRouteAssistantDesktop
                                     ArrivalTimeSec = stop.TryGetProperty("arrivalTimeSec", out var arrival) && arrival.ValueKind == JsonValueKind.Number ? arrival.GetDouble() : null,
                                     DepartureTimeSec = stop.TryGetProperty("departureTimeSec", out var departure) && departure.ValueKind == JsonValueKind.Number ? departure.GetDouble() : null,
                                     StopMinutes = stop.TryGetProperty("stopMinutes", out var stopMinutes) && stopMinutes.ValueKind == JsonValueKind.Number ? stopMinutes.GetInt32() : 0,
-                                    RelativeTimes = stop.TryGetProperty("relativeTimes", out var relative) && relative.ValueKind is JsonValueKind.True or JsonValueKind.False && relative.GetBoolean()
+                                    RelativeTimes = stop.TryGetProperty("relativeTimes", out var relative) && relative.ValueKind is JsonValueKind.True or JsonValueKind.False && relative.GetBoolean(),
+                                    NonStop = stop.TryGetProperty("nonStop", out var nonStop) && nonStop.ValueKind is JsonValueKind.True or JsonValueKind.False && nonStop.GetBoolean()
                                 });
                             }
                         }
@@ -928,14 +934,19 @@ namespace RailRouteAssistantDesktop
                 train.MapEntryTimeSec,
                 train.MapExitTimeSec,
                 train.MapEntryStation,
-                train.MapExitStation);
+                train.MapExitStation,
+                train.MapEntryPlatform,
+                train.MapExitPlatform,
+                train.MapEntryNonStop,
+                train.MapExitNonStop);
             _modalDialogShowing = true;
             try { dialog.ShowDialog(this); }
             finally { _modalDialogShowing = false; }
         }
 
         /// <summary>
-        /// 尝试拆分复合车号。支持 G4545G4546、0G6642G6641、DJ8598G3401。
+        /// 尝试拆分复合车号。支持相邻编号和斜杠形式，例如
+        /// G4545G4546、DJ8598G3401、0G1703/G1704、0Y2/Y1。
         /// </summary>
         private static bool TrySplitMergedTrainNumber(string name, out string part1, out string part2)
         {
@@ -1005,6 +1016,10 @@ namespace RailRouteAssistantDesktop
                     ActualVisitCount = t.ActualVisitCount,
                     LastVisitDeparted = t.LastVisitDeparted,
                     DepartureRemainingSec = t.DepartureRemainingSec,
+                    NextArrivalSec = t.NextArrivalSec,
+                    NextStation = t.NextStation,
+                    PrePassingStation = hadPrev && string.Equals(prev.NextStation, t.NextStation, StringComparison.Ordinal)
+                        ? prev.PrePassingStation : null,
                     PreDepartureAnnouncementVisitCount = hadPrev ? prev.PreDepartureAnnouncementVisitCount : 0,
                     DirectionChangeAnnouncementVisitCount = hadPrev ? prev.DirectionChangeAnnouncementVisitCount : -1
                 };
@@ -1016,9 +1031,9 @@ namespace RailRouteAssistantDesktop
                     string announceCode = GetActiveTrainCode(t);
                     string dest = LookupDestination(announceCode);
 
-                    // 1. 等待入图：在列车真正生成到地图前播报接近信息。
-                    // 不在 OnBoard 变更时补播，避免在列车已经进入地图后顺序滞后。
-                    if (!prev.Waiting && t.Waiting)
+                    // 1. 等待入图：优先在 Waiting 出现时播报；首站为通过站的地图可能
+                    // 不提供该状态，因此在 OnBoard 由 false 变 true 时兜底补报。
+                    if ((!prev.Waiting && t.Waiting) || (!prev.OnBoard && t.OnBoard))
                     {
                         if (ShouldAnnounce(announceCode, "arriving", nowUtc))
                         {
@@ -1032,13 +1047,28 @@ namespace RailRouteAssistantDesktop
                         }
                     }
 
-                    // 2. 一次实际访问已经完成：NonStop=true 为通过，否则为到站停车。
+                    // 2. 通过站前三个游戏分钟预告。下一访问刚切换且已落入窗口时也播，
+                    // 避免刷新间隔或短区间造成越过 180 秒边界后漏报。
+                    if (EnteredPrePassingWindow(t, prev) &&
+                        !string.Equals(cur.PrePassingStation, t.NextStation, StringComparison.Ordinal) &&
+                        ShouldAnnounce(announceCode, $"pre-passing-{t.ActualVisitCount}-{t.NextStation}", nowUtc))
+                    {
+                        _voice.Enqueue(new VoiceEngine.Announcement
+                        {
+                            Type = VoiceEngine.AnnouncementType.ApproachingPass,
+                            TrainCode = announceCode,
+                            Station = StripEnglishPrefix(t.NextStation),
+                            Platform = t.Platform
+                        });
+                        cur.PrePassingStation = t.NextStation;
+                        Console.WriteLine($"[Voice] 通过预告: {announceCode} -> {t.NextStation}{t.Platform}道，还有{(t.NextArrivalSec ?? 0):F0}秒");
+                    }
+
+                    // 3. 一次实际访问已经完成：NonStop=true 为通过，否则为到站停车。
                     bool hasNewVisit = t.ActualVisitCount > prev.ActualVisitCount;
                     if (hasNewVisit && t.ActualVisitCount > 0 && t.LastVisitNonStop)
                     {
-                        // 地图首站/末站不播报通过；中间通过站才需要该信息。
-                        if (IsIntermediateScheduledVisit(t) &&
-                            ShouldAnnounce(announceCode, $"passing-{t.ActualVisitCount}", nowUtc))
+                        if (ShouldAnnounce(announceCode, $"passing-{t.ActualVisitCount}", nowUtc))
                         {
                             _voice.Enqueue(new VoiceEngine.Announcement
                             {
@@ -1047,8 +1077,13 @@ namespace RailRouteAssistantDesktop
                                 Destination = dest,
                                 Station = StripEnglishPrefix(t.LastVisitStation),
                                 Platform = t.LastVisitPlatform,
+                                // 通过播报必须给出早点/正点/晚点。优先使用本站实测偏差；
+                                // RelativeTimes 无绝对时刻时才退回游戏提供的列车偏差。
+                                DelayMinutes = GetScheduleDeviationMinutes(
+                                    t.LastArrivalScheduleDeviationSec ?? t.Delay),
                                 NextStation = StripEnglishPrefix(t.NextStation),
-                                NextPlatform = t.Platform
+                                NextPlatform = t.Platform,
+                                NextStationNonStop = t.NextStationNonStop
                             });
                             Console.WriteLine($"[Voice] 通过: {announceCode} @ {t.LastVisitStation}{t.LastVisitPlatform}道 -> {t.NextStation}{t.Platform}道");
                         }
@@ -1092,7 +1127,7 @@ namespace RailRouteAssistantDesktop
                         Console.WriteLine($"[Voice] 调向: {announceCode}");
                     }
 
-                    // 3. 中间站发车前一分钟预告。以倒计时越过 60 秒为触发点，
+                    // 4. 中间站发车前一分钟预告。以倒计时越过 60 秒为触发点，
                     // 既能容忍刷新间隔，也避免在整分钟内重复播报。
                     if (EnteredPreDepartureWindow(t, prev) && prev.PreDepartureAnnouncementVisitCount != t.ActualVisitCount)
                     {
@@ -1113,25 +1148,26 @@ namespace RailRouteAssistantDesktop
                         }
                     }
 
-                    // 4. 发车：优先使用游戏的 Departed 标记；旧插件数据缺该字段时回退速度变化。
+                    // 5. 发车：优先使用游戏的 Departed 标记；旧插件数据缺该字段时回退速度变化。
                     bool departed = prev.WasStationStop &&
                         ((!prev.LastVisitDeparted && t.LastVisitDeparted) || (prev.Speed == 0 && t.Speed > 0));
                     if (departed && ShouldAnnounce(announceCode, $"departed-{t.ActualVisitCount}", nowUtc))
                     {
-                        bool hasNextMapStop = IsMapStop(t.NextStation, t.NextStationNonStop);
+                        bool hasNextMapVisit = IsMapVisit(t.NextStation);
                         _voice.Enqueue(new VoiceEngine.Announcement
                         {
                             Type = VoiceEngine.AnnouncementType.Departed,
                             TrainCode = announceCode,
                             Destination = dest,
-                            NextStation = hasNextMapStop ? StripEnglishPrefix(t.NextStation) : "",
-                            NextPlatform = hasNextMapStop ? t.Platform : 0,
+                            NextStation = hasNextMapVisit ? StripEnglishPrefix(t.NextStation) : "",
+                            NextPlatform = hasNextMapVisit ? t.Platform : 0,
+                            NextStationNonStop = hasNextMapVisit && t.NextStationNonStop,
                             // 只使用插件按“本站计划发车时刻 - 游戏时钟”固定的结果。
                             // Train.Delay 会跨站累积，不能代表本次实际发车是否晚点。
                             DelayMinutes = GetDepartureDelayMinutes(t.LastDepartureScheduleDelaySec)
                         });
                         Console.WriteLine($"[Voice] 发车: {announceCode} 开往{dest}" +
-                            (hasNextMapStop ? $" -> {t.NextStation}{t.Platform}道" : "（出图/无下一停站）"));
+                            (hasNextMapVisit ? $" -> {t.NextStation}{t.Platform}道" : "（出图/无下一站）"));
                     }
                 }
 
@@ -1156,10 +1192,25 @@ namespace RailRouteAssistantDesktop
             return t.OnBoard && t.Speed == 0 && !string.IsNullOrEmpty(t.StopReasons) && t.StopReasons.Contains("Station");
         }
 
-        private static bool IsMapStop(string station, bool nonStop)
+        private static bool IsMapVisit(string station)
         {
-            return !nonStop && !string.IsNullOrWhiteSpace(station) &&
+            return !string.IsNullOrWhiteSpace(station) &&
                 !station.Contains("方向", StringComparison.Ordinal);
+        }
+
+        private static bool EnteredPrePassingWindow(TrainData train, TrainPrevState prev)
+        {
+            if (!train.NextStationNonStop || string.IsNullOrWhiteSpace(train.NextStation) ||
+                !train.NextArrivalSec.HasValue)
+                return false;
+
+            double remaining = train.NextArrivalSec.Value;
+            if (remaining <= 0 || remaining > PrePassingAnnouncementSeconds)
+                return false;
+
+            return !string.Equals(prev.NextStation, train.NextStation, StringComparison.Ordinal) ||
+                !prev.NextArrivalSec.HasValue ||
+                prev.NextArrivalSec.Value > PrePassingAnnouncementSeconds;
         }
 
         /// <summary>
@@ -1302,11 +1353,14 @@ namespace RailRouteAssistantDesktop
                     ArrivalTimeSec = stop.ArrivalTimeSec,
                     DepartureTimeSec = stop.DepartureTimeSec,
                     StopMinutes = stop.StopMinutes,
-                    RelativeTimes = stop.RelativeTimes
+                    RelativeTimes = stop.RelativeTimes,
+                    NonStop = stop.NonStop
                 }).ToList(),
                 NextPrepareSec = t.NextPrepareSec, NextArrivalSec = t.NextArrivalSec, NotMovingSince = t.NotMovingSince,
                 MapEntryTimeSec = t.MapEntryTimeSec, MapExitTimeSec = t.MapExitTimeSec,
-                MapEntryStation = t.MapEntryStation, MapExitStation = t.MapExitStation
+                MapEntryStation = t.MapEntryStation, MapExitStation = t.MapExitStation,
+                MapEntryPlatform = t.MapEntryPlatform, MapExitPlatform = t.MapExitPlatform,
+                MapEntryNonStop = t.MapEntryNonStop, MapExitNonStop = t.MapExitNonStop
             };
         }
 
@@ -1315,21 +1369,8 @@ namespace RailRouteAssistantDesktop
         /// 例如 "Nanjing南京站" -> "南京站"；"Station_01 北京南" -> "北京南"。
         /// 若站名中无中文字符，则原样返回。
         /// </summary>
-        private static string StripEnglishPrefix(string station)
-        {
-            if (string.IsNullOrEmpty(station)) return station;
-            // 找第一个 CJK 统一汉字（\u4e00-\u9fff）的位置
-            for (int i = 0; i < station.Length; i++)
-            {
-                char c = station[i];
-                if (c >= '\u4e00' && c <= '\u9fff')
-                {
-                    return station.Substring(i);
-                }
-            }
-            // 无中文，原样返回
-            return station;
-        }
+        private static string StripEnglishPrefix(string station) =>
+            StationNameFormatter.ChineseOrOriginal(station);
 
         private static string FormatDepartureStatus(TrainData t)
         {
@@ -1510,6 +1551,9 @@ namespace RailRouteAssistantDesktop
         public int ActualVisitCount;
         public bool LastVisitDeparted;
         public double? DepartureRemainingSec;
+        public double? NextArrivalSec;
+        public string NextStation;
+        public string PrePassingStation;
         public int PreDepartureAnnouncementVisitCount;
         public int DirectionChangeAnnouncementVisitCount;
     }
@@ -1544,6 +1588,8 @@ namespace RailRouteAssistantDesktop
         public double? MapExitTimeSec;   // 列车离开地图的计划时刻（游戏内绝对秒数）
         public string MapEntryStation;   // 列车进入地图的站名
         public string MapExitStation;    // 列车离开地图的站名（游戏地图内终点站）
+        public int MapEntryPlatform; public int MapExitPlatform;
+        public bool MapEntryNonStop; public bool MapExitNonStop;
     }
 
     public class ScheduledStopData
@@ -1554,6 +1600,7 @@ namespace RailRouteAssistantDesktop
             public double? DepartureTimeSec;
             public int StopMinutes;
             public bool RelativeTimes;
+            public bool NonStop;
         }
     }
 

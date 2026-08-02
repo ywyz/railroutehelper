@@ -12,6 +12,7 @@ namespace RailRouteAssistant
         public double? DepartureGameTimeSeconds;
         public int StopDurationMinutes;
         public bool RelativeTimes;
+        public bool NonStop;
     }
 
     /// <summary>
@@ -82,6 +83,10 @@ namespace RailRouteAssistant
         // 列车进入/离开当前游戏地图的站名（取自首个/末个 ScheduledVisit 的站名，含通过站）。
         public string MapEntryStationName;
         public string MapExitStationName;
+        public int MapEntryPlatformNumber;
+        public int MapExitPlatformNumber;
+        public bool MapEntryNonStop;
+        public bool MapExitNonStop;
 
         // 当前计划停站。仅在列车真正停站时使用；To 为游戏内绝对发车时刻。
         public string CurrentStationName;

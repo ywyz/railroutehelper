@@ -61,7 +61,7 @@ namespace RailRouteAssistantDesktop
         {
             { 'G', "高" }, { 'D', "动" }, { 'C', "城" }, { 'Z', "直" },
             { 'K', "快" }, { 'T', "特" }, { 'X', "行" }, { 'S', "市域" },
-            { 'J', "检" },
+            { 'J', "检" }, { 'Y', "游" },
         };
 
         public VoiceEngine(string audioDir)
@@ -287,7 +287,7 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>播报类型</summary>
-        public enum AnnouncementType { Arriving, StoppedAtStation, PreDeparture, Departed, Passing, DirectionChange }
+        public enum AnnouncementType { Arriving, ApproachingPass, StoppedAtStation, PreDeparture, Departed, Passing, DirectionChange }
 
         /// <summary>一条播报所需的具名字段，避免将当前站与下一站的位置参数混用。</summary>
         public sealed class Announcement
@@ -299,6 +299,7 @@ namespace RailRouteAssistantDesktop
             public int Platform;
             public string NextStation;
             public int NextPlatform;
+            public bool NextStationNonStop;
             public int StopMinutes;
             /// <summary>本次停站后游戏要求列车调向。</summary>
             public bool RequiresDirectionChange;
@@ -329,6 +330,14 @@ namespace RailRouteAssistantDesktop
                     AddDirectionPrefix(segs, dest);
                     AddTrainNumber(segs, announcement.TrainCode);
                     AddTts(segs, "接近。");
+                    break;
+
+                case AnnouncementType.ApproachingPass:
+                    // 通过站前三分钟：车号列车即将通过 xx站 xx道，请做好接车准备。
+                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTts(segs, "次列车即将通过");
+                    AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "道");
+                    AddTts(segs, "，请做好接车准备。");
                     break;
 
                 case AnnouncementType.StoppedAtStation:
@@ -397,21 +406,21 @@ namespace RailRouteAssistantDesktop
                     if (!string.IsNullOrEmpty(announcement.NextStation))
                     {
                         AddTts(segs, "，");
-                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform);
+                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform, announcement.NextStationNonStop);
                     }
                     AddTts(segs, "。");
                     break;
 
                 case AnnouncementType.Passing:
-                    // 开往 xx 方向的列车 车号 通过 xx x道，下一站 xx x道。
-                    AddDirectionPrefix(segs, dest);
+                    // 车号 早点/正点/晚点 x 分通过 xx x道，下一站[通过] xx x道。
                     AddTrainNumber(segs, announcement.TrainCode);
-                    AddTts(segs, "通过");
+                    AddTts(segs, "次列车");
+                    AddScheduleStatus(segs, announcement.DelayMinutes, "通过");
                     AddStationAndPlatform(segs, announcement.Station, announcement.Platform, "道");
                     if (!string.IsNullOrEmpty(announcement.NextStation))
                     {
                         AddTts(segs, "，");
-                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform);
+                        AddNextStation(segs, announcement.NextStation, announcement.NextPlatform, announcement.NextStationNonStop);
                     }
                     AddTts(segs, "。");
                     break;
@@ -440,12 +449,25 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>添加“下一站 xx x道”；没有可用下一站时返回 false。</summary>
-        private bool AddNextStation(List<Segment> segs, string station, int platform)
+        private bool AddNextStation(List<Segment> segs, string station, int platform, bool nonStop = false)
         {
             if (string.IsNullOrEmpty(station)) return false;
             AddTts(segs, "下一站");
+            if (nonStop) AddTts(segs, "通过");
             AddStationAndPlatform(segs, station, platform, "道");
             return true;
+        }
+
+        private void AddScheduleStatus(List<Segment> segs, int? delayMinutes, string action)
+        {
+            if (!delayMinutes.HasValue)
+                AddTts(segs, action);
+            else if (delayMinutes.Value < 0)
+                AddTts(segs, "早点" + FormatChineseCardinal(Math.Abs(delayMinutes.Value)) + "分" + action);
+            else if (delayMinutes.Value > 0)
+                AddTts(segs, "晚点" + FormatChineseCardinal(delayMinutes.Value) + "分" + action);
+            else
+                AddTts(segs, "正点" + action);
         }
 
         private void AddStationAndPlatform(List<Segment> segs, string station, int platform, string platformSuffix)

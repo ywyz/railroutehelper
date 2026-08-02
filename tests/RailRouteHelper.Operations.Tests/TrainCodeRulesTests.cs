@@ -18,6 +18,8 @@ public sealed class TrainCodeRulesTests
     [InlineData("G6642G6641", "G6642", "G6641")]
     [InlineData("0G6642G6641", "0G6642", "G6641")]
     [InlineData("DJ8598G3401", "DJ8598", "G3401")]
+    [InlineData("0G1703/G1704", "0G1703", "G1704")]
+    [InlineData(" 0y2 / y1 次", "0Y2", "0Y1")]
     public void TrySplitCompositeCode_supports_map_variants(
         string input,
         string expectedFirst,
@@ -33,6 +35,10 @@ public sealed class TrainCodeRulesTests
     [InlineData("0G6642G6641", true, "G6641")]
     [InlineData("DJ8598G3401", false, "DJ8598")]
     [InlineData("DJ8598G3401", true, "G3401")]
+    [InlineData("0G1703/G1704", false, "0G1703")]
+    [InlineData("0G1703/G1704", true, "G1704")]
+    [InlineData("0Y2/Y1", false, "0Y2")]
+    [InlineData("0Y2/Y1", true, "0Y1")]
     public void SelectActiveCode_switches_after_stop(string input, bool secondLeg, string expected)
     {
         Assert.Equal(expected, TrainCodeRules.SelectActiveCode(input, secondLeg));
