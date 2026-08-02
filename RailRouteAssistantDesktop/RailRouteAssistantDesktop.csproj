@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>RailRouteAssistantDesktop</AssemblyName>
     <RootNamespace>RailRouteAssistantDesktop</RootNamespace>
-    <Version>2.6.3</Version>
+    <Version>2.6.4</Version>
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 发布为单文件时也必须把两级离线车次表带入程序，换电脑后才能继续降级查询。 -->
@@ -22,6 +22,19 @@
   <ItemGroup>
     <ProjectReference Include="..\src\RailRouteHelper.Core\RailRouteHelper.Core.csproj" />
   </ItemGroup>
+
+  <!-- 正式单文件发布把 BepInEx 与插件压缩包嵌入 EXE。开发构建不传此属性，
+       因而仍可直接启动桌面 UI，不触发安装流程。 -->
+  <ItemGroup Condition="'$(InstallerPayloadZip)' != '' and Exists('$(InstallerPayloadZip)')">
+    <EmbeddedResource Include="$(InstallerPayloadZip)"
+                      LogicalName="RailRouteAssistantDesktop.InstallerPayload.zip" />
+  </ItemGroup>
+
+  <Target Name="ValidateInstallerPayload"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(InstallerPayloadZip)' != '' and !Exists('$(InstallerPayloadZip)')">
+    <Error Text="InstallerPayloadZip does not exist: $(InstallerPayloadZip)" />
+  </Target>
 
   <ItemGroup>
     <None Include="assets\audio\**\*">

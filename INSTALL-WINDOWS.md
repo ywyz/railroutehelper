@@ -1,8 +1,9 @@
 # Windows 一体包安装说明
 
-1. 解压 `RailRouteAssistant-Windows-x64.zip`，不要直接在压缩包内运行程序。
-2. 双击 `RailRouteAssistantDesktop.exe`。标题栏会显示当前版本号；v2.6.3 的标题应为
-   `Rail Route 调度助手 v2.6.3`。如果没有版本号或版本更旧，请关闭程序并确认
+1. 下载 `RailRouteAssistantDesktop.exe` 后可以直接运行；它已经内置 BepInEx 与插件。
+   ZIP 包仍建议完整解压后再运行，便于同时保留安装说明和许可证。
+2. 双击 `RailRouteAssistantDesktop.exe`。标题栏会显示当前版本号；v2.6.4 的标题应为
+   `Rail Route 调度助手 v2.6.4`。如果没有版本号或版本更旧，请关闭程序并确认
    启动的是刚解压的 EXE，而不是此前目录中的旧副本。
 3. 程序会自动查找 Steam 中的 Rail Route；未找到时，请选择包含
    `Rail Route.exe` 的游戏安装目录。
@@ -35,7 +36,8 @@
 - 顶部“语音”菜单可以选择百度、OneCore 或 SAPI5 补全语音；“试听当前补全语音”可立即确认切换结果。
 - “补全语音速度”提供 1–7 档，默认 7，设置会在重启后保留。
 
-一体包只支持 Windows x64 Steam 版 Rail Route。程序不会包含或修改游戏 DLL；
+一体包只支持 Windows x64 Steam 版 Rail Route。单文件 EXE 和 ZIP 中的 EXE 都内置
+BepInEx 安装载荷，不再依赖旁边必须存在 `payload` 目录。程序不会包含或修改游戏 DLL；
 安装内容仅为 BepInEx 文件和 `BepInEx\plugins\RailRouteAssistant.dll`。
 
 BepInEx 5.4.23.5 按 MIT License 再分发，许可证见包内

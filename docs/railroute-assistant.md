@@ -220,7 +220,7 @@ TTS 合成的内容包括：
 ### 桌面程序 UI
 
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
-- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.6.3`；若标题没有版本号，说明启动的是旧版 EXE
+- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.6.4`；若标题没有版本号，说明启动的是旧版 EXE
 - **搜索框**：位于“所有列车”标题下方；输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
@@ -322,14 +322,19 @@ TTS 合成的内容包括：
 
 ### Release 一体包（推荐）
 
-1. 从 GitHub Release 下载并解压 `RailRouteAssistant-Windows-x64.zip`。
+1. 从 GitHub Release 下载 `RailRouteAssistantDesktop.exe` 直接运行，或下载并解压
+   `RailRouteAssistant-Windows-x64.zip`。v2.6.4 起单文件 EXE 已内置完整安装载荷，
+   不再依赖相邻的 `payload` 目录。
 2. 运行 `RailRouteAssistantDesktop.exe`。程序会扫描 Steam 库；找不到时让用户选择包含 `Rail Route.exe` 的游戏目录。
 3. 确认后自动安装包内的 BepInEx 5.4.23.5 x64 和插件；默认 Steam 目录需要写权限时，只在安装阶段请求管理员权限。
 4. 安装完成后自动通过 Steam 启动 Rail Route。以后运行同一桌面程序会记住游戏目录并自动启动游戏。
 
-一体包为 self-contained，不要求目标电脑另装 .NET 8。BepInEx 5.4.23.5 原样按 MIT License 再分发并随包附许可证；不包含任何 Rail Route 或 Unity 文件。
+一体包为 self-contained，不要求目标电脑另装 .NET 8。BepInEx 5.4.23.5 原样按 MIT License 再分发并随包附许可证；不包含任何 Rail Route 或 Unity 文件。内置载荷会先校验并释放到 `%LOCALAPPDATA%\RailRouteAssistant\installer-payload`，再复制到游戏目录。
 
 安装器按插件文件版本判断是否需要覆盖：仅桌面 UI/语音功能升级且插件版本不变时，可以保持游戏运行并只重启桌面助手；只有 `RailRouteAssistant.dll` 版本升高时才需要关闭并重新启动游戏。
+
+v2.6.4 同步了程序集文件版本与 BepInEx 插件声明版本。由更早版本升级到
+v2.6.4 时安装器会覆盖插件，因此升级完成后需要重启游戏一次。
 
 ### 开发构建
 

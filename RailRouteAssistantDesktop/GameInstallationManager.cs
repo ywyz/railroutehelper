@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -20,8 +22,11 @@ namespace RailRouteAssistantDesktop
         private const string SteamAppId = "1124180";
         private const string GameExecutableName = "Rail Route.exe";
         private const string ElevatedInstallArgument = "--install-elevated";
+        private const string EmbeddedPayloadResourceName =
+            "RailRouteAssistantDesktop.InstallerPayload.zip";
 
-        private static readonly string PayloadDirectory = Path.Combine(AppContext.BaseDirectory, "payload");
+        private static readonly string ExternalPayloadDirectory =
+            Path.Combine(AppContext.BaseDirectory, "payload");
         private static readonly string SettingsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "RailRouteAssistant");
@@ -29,8 +34,23 @@ namespace RailRouteAssistantDesktop
 
         public static bool PrepareInstallationAndLaunch(string[] args)
         {
-            // 普通开发输出没有 payload，不弹安装窗口，也不改变原有调试体验。
-            if (!HasCompletePayload()) return true;
+            string payloadDirectory;
+            try
+            {
+                payloadDirectory = ResolvePayloadDirectory();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"读取内置安装文件失败：{ex.Message}\n\n请重新下载完整安装包后重试。",
+                    "Rail Route 调度助手",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return false;
+            }
+
+            // 普通开发输出没有外置或内置 payload，不弹安装窗口，也不改变调试体验。
+            if (payloadDirectory == null) return true;
 
             bool elevatedInstall = args.Length >= 2 &&
                 string.Equals(args[0], ElevatedInstallArgument, StringComparison.OrdinalIgnoreCase);
@@ -51,7 +71,7 @@ namespace RailRouteAssistantDesktop
 
             try
             {
-                bool installed = InstallPayloadIfNeeded(gameDirectory);
+                bool installed = InstallPayloadIfNeeded(gameDirectory, payloadDirectory);
                 if (installed)
                 {
                     MessageBox.Show(
@@ -163,17 +183,73 @@ namespace RailRouteAssistantDesktop
                 .Distinct(StringComparer.OrdinalIgnoreCase);
         }
 
-        private static bool HasCompletePayload()
+        private static string ResolvePayloadDirectory()
         {
-            return File.Exists(Path.Combine(PayloadDirectory, "BepInEx", "core", "BepInEx.dll")) &&
-                File.Exists(Path.Combine(PayloadDirectory, "BepInEx", "plugins", "RailRouteAssistant.dll")) &&
-                File.Exists(Path.Combine(PayloadDirectory, "winhttp.dll")) &&
-                File.Exists(Path.Combine(PayloadDirectory, "doorstop_config.ini"));
+            if (HasCompletePayload(ExternalPayloadDirectory)) return ExternalPayloadDirectory;
+
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            using Stream hashResource = assembly.GetManifestResourceStream(EmbeddedPayloadResourceName);
+            if (hashResource == null) return null;
+
+            string cacheKey = ComputeHashPrefix(hashResource);
+            string cacheDirectory = Path.Combine(SettingsDirectory, "installer-payload", cacheKey);
+            if (HasCompletePayload(cacheDirectory)) return cacheDirectory;
+
+            using Stream payloadResource = assembly.GetManifestResourceStream(EmbeddedPayloadResourceName);
+            if (payloadResource == null)
+                throw new InvalidDataException("无法再次打开内置安装文件。");
+
+            ExtractPayload(payloadResource, cacheDirectory);
+            if (!HasCompletePayload(cacheDirectory))
+                throw new InvalidDataException("内置安装文件不完整，缺少 BepInEx 或调度助手插件。");
+
+            return cacheDirectory;
         }
 
-        private static bool InstallPayloadIfNeeded(string gameDirectory)
+        private static bool HasCompletePayload(string payloadDirectory)
         {
-            string sourcePlugin = Path.Combine(PayloadDirectory, "BepInEx", "plugins", "RailRouteAssistant.dll");
+            return File.Exists(Path.Combine(payloadDirectory, "BepInEx", "core", "BepInEx.dll")) &&
+                File.Exists(Path.Combine(payloadDirectory, "BepInEx", "plugins", "RailRouteAssistant.dll")) &&
+                File.Exists(Path.Combine(payloadDirectory, "winhttp.dll")) &&
+                File.Exists(Path.Combine(payloadDirectory, "doorstop_config.ini"));
+        }
+
+        private static string ComputeHashPrefix(Stream source)
+        {
+            using var sha = SHA256.Create();
+            byte[] hash = sha.ComputeHash(source);
+            return Convert.ToHexString(hash).Substring(0, 16).ToLowerInvariant();
+        }
+
+        private static void ExtractPayload(Stream zipStream, string destinationDirectory)
+        {
+            Directory.CreateDirectory(destinationDirectory);
+            string destinationRoot = Path.GetFullPath(destinationDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                string destinationPath = Path.GetFullPath(
+                    Path.Combine(destinationRoot, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
+                if (!destinationPath.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"内置安装文件包含不安全路径：{entry.FullName}");
+
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destinationPath);
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                entry.ExtractToFile(destinationPath, overwrite: true);
+            }
+        }
+
+        private static bool InstallPayloadIfNeeded(string gameDirectory, string payloadDirectory)
+        {
+            string sourcePlugin = Path.Combine(payloadDirectory, "BepInEx", "plugins", "RailRouteAssistant.dll");
             string targetPlugin = Path.Combine(gameDirectory, "BepInEx", "plugins", "RailRouteAssistant.dll");
             bool hasBepInEx =
                 File.Exists(Path.Combine(gameDirectory, "BepInEx", "core", "BepInEx.dll")) &&
@@ -184,7 +260,7 @@ namespace RailRouteAssistantDesktop
 
             if (!hasBepInEx)
             {
-                CopyDirectory(PayloadDirectory, gameDirectory, overwrite: false);
+                CopyDirectory(payloadDirectory, gameDirectory, overwrite: false);
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(targetPlugin));
