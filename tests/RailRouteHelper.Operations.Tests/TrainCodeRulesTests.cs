@@ -9,6 +9,8 @@ public sealed class TrainCodeRulesTests
     [InlineData(" 0g2524 次", "G2524")]
     [InlineData("通G2524", "G2524")]
     [InlineData("DJ8598", "DJ8598")]
+    [InlineData("DJ54", "DJ54")]
+    [InlineData("0Y2", "Y2")]
     public void NormalizeLookupCode_removes_only_map_prefixes(string input, string expected)
     {
         Assert.Equal(expected, TrainCodeRules.NormalizeLookupCode(input));

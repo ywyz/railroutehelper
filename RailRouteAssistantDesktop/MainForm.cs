@@ -704,20 +704,34 @@ namespace RailRouteAssistantDesktop
         /// </summary>
         private static Color GetTrainBackColor(string name)
         {
-            if (string.IsNullOrEmpty(name)) return ColorBg;
-            char c = name[0];
+            string code = TrainCodeRules.NormalizeLookupCode(name) ?? "";
+            if (string.IsNullOrEmpty(code)) return ColorBg;
+
+            // DJ 是“动检”列车，不与普通 D 字头动车使用同一背景色。
+            if (code.StartsWith("DJ", StringComparison.Ordinal))
+                return Color.FromArgb(20, 55, 65);       // 动检 - 暗蓝绿
+
+            char c = code[0];
             return c switch
             {
                 'G' => Color.FromArgb(80, 30, 30),   // 高铁 - 暗红
                 'D' => Color.FromArgb(20, 40, 70),   // 动车 - 暗蓝
-                'C' when name.Length <= 4 => Color.FromArgb(20, 60, 30),   // 城际三字 - 暗绿
-                'C' when name.Length >= 5 => Color.FromArgb(20, 50, 55),   // 城际四字 - 暗青
+                'C' when code.Length <= 4 => Color.FromArgb(20, 60, 30),   // 城际三字 - 暗绿
+                'C' => Color.FromArgb(20, 50, 55),   // 城际四字 - 暗青
                 'X' => Color.FromArgb(50, 30, 60),   // 行包/直达特快X - 暗紫
                 'Z' => Color.FromArgb(20, 60, 30),   // 直达 - 暗绿
                 'T' => Color.FromArgb(70, 50, 20),   // 特快 - 暗橙
                 'K' => Color.FromArgb(60, 55, 20),   // 快速 - 暗黄
                 'L' => Color.FromArgb(40, 40, 50),   // 临客 - 暗灰蓝
                 'S' => Color.FromArgb(50, 30, 60),   // 市郊 - 暗紫
+                'Y' => Color.FromArgb(70, 30, 55),   // 游车 - 暗玫红
+                'J' => Color.FromArgb(20, 55, 65),   // 检测/特殊列车 - 暗蓝绿
+                'P' => Color.FromArgb(65, 42, 25),   // 特殊/临时列车 - 暗棕
+                'Q' => Color.FromArgb(25, 55, 52),   // 特殊列车 - 暗青绿
+                'N' => Color.FromArgb(50, 50, 25),   // 管内/特殊列车 - 暗橄榄
+                'A' => Color.FromArgb(55, 35, 45),   // 按需/特殊列车 - 暗褐红
+                >= '0' and <= '9' => Color.FromArgb(52, 42, 30), // 纯数字普速 - 暗棕灰
+                >= 'A' and <= 'Z' => Color.FromArgb(45, 35, 55), // 其他字头 - 暗紫灰
                 _ => ColorBg
             };
         }
