@@ -327,8 +327,9 @@ namespace RailRouteAssistantDesktop
             {
                 case AnnouncementType.Arriving:
                     // 等待入图：开往 xx 方向的列车 车号 接近。
+                    // 入图播报读出完整车号（含中文括注，如“技停不办客”），后续播报只读主车号。
                     AddDirectionPrefix(segs, dest);
-                    AddTrainNumber(segs, announcement.TrainCode);
+                    AddTrainNumber(segs, announcement.TrainCode, includeAnnotation: true);
                     AddTts(segs, "接近。");
                     break;
 
@@ -480,13 +481,30 @@ namespace RailRouteAssistantDesktop
             }
         }
 
-        /// <summary>添加车号读音：字母读音 + 数字逐位</summary>
-        private void AddTrainNumber(List<Segment> segs, string code)
+        /// <summary>
+        /// 添加车号读音：字母读音 + 数字逐位。
+        /// 部分地图在车号后附加中文括注，例如沈阳枢纽的“Z212(技停不办客)”。
+        /// 入图播报（includeAnnotation=true）时读出括注内容，其余播报只读主车号。
+        /// </summary>
+        private void AddTrainNumber(List<Segment> segs, string code, bool includeAnnotation = false)
         {
             if (string.IsNullOrEmpty(code)) return;
-            for (int i = 0; i < code.Length; i++)
+
+            // 拆分主车号与中文括注，例如 "Z212(技停不办客)" → 主车号 "Z212"，括注 "技停不办客"。
+            int parenIdx = code.IndexOfAny(new[] { '(', '（' });
+            string mainCode = parenIdx > 0 ? code.Substring(0, parenIdx) : code;
+            string annotation = null;
+            if (parenIdx >= 0 && includeAnnotation)
             {
-                char c = code[i];
+                int closeIdx = code.IndexOfAny(new[] { ')', '）' }, parenIdx);
+                annotation = closeIdx > parenIdx
+                    ? code.Substring(parenIdx + 1, closeIdx - parenIdx - 1)
+                    : code.Substring(parenIdx + 1);
+            }
+
+            for (int i = 0; i < mainCode.Length; i++)
+            {
+                char c = mainCode[i];
                 if (char.IsLetter(c))
                 {
                     char up = char.ToUpper(c);
@@ -508,6 +526,10 @@ namespace RailRouteAssistantDesktop
                         AddTts(segs, DigitChinese[c - '0']);
                 }
             }
+
+            // 入图播报时读出括注内容（如“技停不办客”），其余播报忽略括注。
+            if (!string.IsNullOrEmpty(annotation))
+                AddTts(segs, annotation);
         }
 
         /// <summary>添加数字读音（多位数逐位读）</summary>

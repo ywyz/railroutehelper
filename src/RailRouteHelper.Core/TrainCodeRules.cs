@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace RailRouteHelper.Core;
@@ -28,7 +29,35 @@ public static class TrainCodeRules
         if (normalized.Length > 2 && normalized[0] == '0' && char.IsLetter(normalized[1]))
             normalized = normalized.Substring(1);
 
+        // 部分地图在车号后附加中文括注，例如沈阳枢纽的“Z212(技停不办客)”。
+        // 12306 和离线车次库只认纯车号，查询前去掉括注及括注外的中文。
+        normalized = StripChineseAnnotation(normalized);
+
         return string.IsNullOrEmpty(normalized) ? null : normalized;
+    }
+
+    /// <summary>
+    /// 去掉车次编号中的中文括注后缀，例如 "Z212(技停不办客)" → "Z212"。
+    /// 同时移除括注外的中文，保留前导“通”和英数字号。供查询和非入图播报使用。
+    /// </summary>
+    public static string? StripChineseAnnotation(string? code)
+    {
+        if (string.IsNullOrEmpty(code)) return code;
+
+        int paren = code.IndexOfAny(new[] { '(', '（' });
+        if (paren >= 0)
+            code = code.Substring(0, paren);
+
+        var sb = new StringBuilder();
+        foreach (char c in code)
+        {
+            // CJK Unified Ideographs 范围内的中文统一表意文字一律移除。
+            if (c >= 0x4E00 && c <= 0x9FFF) continue;
+            sb.Append(c);
+        }
+
+        string result = sb.ToString().Trim();
+        return string.IsNullOrEmpty(result) ? null : result;
     }
 
     /// <summary>

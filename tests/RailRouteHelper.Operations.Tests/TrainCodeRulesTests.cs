@@ -11,9 +11,22 @@ public sealed class TrainCodeRulesTests
     [InlineData("DJ8598", "DJ8598")]
     [InlineData("DJ54", "DJ54")]
     [InlineData("0Y2", "Y2")]
+    [InlineData("Z212(技停不办客)", "Z212")]
+    [InlineData("Z212（技停不办客）", "Z212")]
+    [InlineData("K7711(技停)", "K7711")]
     public void NormalizeLookupCode_removes_only_map_prefixes(string input, string expected)
     {
         Assert.Equal(expected, TrainCodeRules.NormalizeLookupCode(input));
+    }
+
+    [Theory]
+    [InlineData("Z212(技停不办客)", "Z212")]
+    [InlineData("Z212（技停不办客）", "Z212")]
+    [InlineData("Z212", "Z212")]
+    [InlineData("G2524(临)", "G2524")]
+    public void StripChineseAnnotation_removes_parenthetical_chinese(string input, string expected)
+    {
+        Assert.Equal(expected, TrainCodeRules.StripChineseAnnotation(input));
     }
 
     [Theory]
