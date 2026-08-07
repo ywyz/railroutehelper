@@ -97,8 +97,27 @@
         "resolved": "4.7.0",
         "contentHash": "ojD0PX0XhneCsUbAZVKdb7h/70vyYMDYs85lwEI+LngEONe/17A0cFaRFqZU+sOEidcVswYWikYOQ9PPfjlbtQ=="
       },
+      "railroutehelper.assistantsessions": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Protocol": "[1.0.0, )"
+        }
+      },
       "railroutehelper.core": {
         "type": "Project"
+      },
+      "railroutehelper.operations": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )"
+        }
+      },
+      "railroutehelper.protocol": {
+        "type": "Project",
+        "dependencies": {
+          "RailRouteHelper.Core": "[1.0.0, )",
+          "RailRouteHelper.Operations": "[1.0.0, )"
+        }
       }
     }
   }

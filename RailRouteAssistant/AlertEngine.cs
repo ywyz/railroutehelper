@@ -26,12 +26,125 @@ namespace RailRouteAssistant
 
         private static int LevelOrder(string level) => level switch
         {
-            "critical" => 0,
+            "critical" => 2,
             "warning" => 1,
-            _ => 2
+            _ => 0
         };
 
         private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        private static AlertInfo CreateTrainAlert(
+            TrainSnapshot train,
+            string kind,
+            string severity,
+            string message,
+            string stationName = null,
+            int platformNumber = 0)
+        {
+            var alert = new AlertInfo
+            {
+                Kind = kind,
+                Severity = severity,
+                // Level is the legacy field consumed by the original desktop app.
+                Level = severity,
+                PrimaryTrainId = StableTrainIdentity(train),
+                TrainName = train?.TrainName ?? "",
+                StationName = stationName ?? train?.NextStationName ?? "",
+                PlatformNumber = platformNumber > 0 ? platformNumber : (train?.NextPlatformNumber ?? 0),
+                Summary = message ?? "",
+                Message = message ?? "",
+                TimestampMs = NowMs()
+            };
+
+            if (train?.RouteStepTrackIds != null)
+                alert.RouteTrackIds = StableTrackIds(train.RouteStepTrackIds);
+
+            alert.Fingerprint = AlertFingerprint.Compute(alert);
+
+            return alert;
+        }
+
+        private static AlertInfo CreatePairAlert(
+            TrainSnapshot first,
+            TrainSnapshot second,
+            string kind,
+            string severity,
+            string message,
+            string trainName,
+            string stationName = null,
+            int platformNumber = 0,
+            IEnumerable<string> routeTrackIds = null)
+        {
+            var ordered = StablePair(first, second);
+            var primary = ordered.Count > 0 ? ordered[0] : null;
+            var alert = new AlertInfo
+            {
+                Kind = kind,
+                Severity = severity,
+                Level = severity,
+                // Keep the old display name supplied by the detection branch. The
+                // structured IDs below are canonicalized independently of it.
+                TrainName = trainName ?? "",
+                PrimaryTrainId = StableTrainIdentity(primary),
+                // A pair alert only has a station/platform when the detector
+                // supplied one (for example, platform-conflict). Route alerts
+                // intentionally leave these fields empty/zero.
+                StationName = stationName ?? "",
+                PlatformNumber = platformNumber,
+                Summary = message ?? "",
+                Message = message ?? "",
+                TimestampMs = NowMs(),
+                RouteTrackIds = StableTrackIds(routeTrackIds)
+            };
+
+            // RelatedTrainIds intentionally contains the other train only. The
+            // first ID is represented by PrimaryTrainId, and this order is stable
+            // even when snapshot enumeration order changes.
+            foreach (var related in ordered.Skip(1))
+            {
+                var relatedIdentity = StableTrainIdentity(related);
+                if (!string.IsNullOrEmpty(relatedIdentity))
+                    alert.RelatedTrainIds.Add(relatedIdentity);
+            }
+
+            alert.Fingerprint = AlertFingerprint.Compute(alert);
+
+            return alert;
+        }
+
+        private static List<TrainSnapshot> StablePair(TrainSnapshot first, TrainSnapshot second)
+        {
+            return new[] { first, second }
+                .Where(t => t != null)
+                .OrderBy(StableTrainKey, StringComparer.Ordinal)
+                .ThenBy(t => t.TrainName ?? "", StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static string StableTrainKey(TrainSnapshot train)
+        {
+            if (train == null) return "2:";
+            return string.IsNullOrWhiteSpace(train.TrainId)
+                ? "1:" + (train.TrainName ?? "")
+                : "0:" + train.TrainId;
+        }
+
+        private static string StableTrainIdentity(TrainSnapshot train)
+        {
+            if (train == null) return "";
+            return string.IsNullOrWhiteSpace(train.TrainId)
+                ? (train.TrainName ?? "")
+                : train.TrainId;
+        }
+
+        private static List<string> StableTrackIds(IEnumerable<string> trackIds)
+        {
+            return (trackIds ?? Enumerable.Empty<string>())
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .ToList();
+        }
 
         private static List<AlertInfo> EvaluateTrain(TrainSnapshot snap)
         {
@@ -81,39 +194,33 @@ namespace RailRouteAssistant
                 // 这是列车越过当前信号后即可出现的最早预警窗口。
                 if (signalClosed && !trainBraking && !trainSlowing && !isStationStop)
                 {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "warning",
-                        TrainName = snap.TrainName,
-                        Message = $"{signalReason}，请及时处理 速度{snap.CurrentSpeed}km/h{nextStation}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        snap,
+                        AlertKinds.NextSignalBlocked,
+                        "warning",
+                        $"{signalReason}，请及时处理 速度{snap.CurrentSpeed}km/h{nextStation}"));
                 }
 
                 // ========== Level 2 (warning): 列车开始降速（TargetSpeed 下降但仍 > 0）==========
                 // 降速只用于确认已受真实阻挡影响，不能在没有明确信号状态时独立告警。
                 if (signalClosed && trainSlowing && !isStationStop)
                 {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "warning",
-                        TrainName = snap.TrainName,
-                        Message = $"{signalReason}，列车正在减速 速度{snap.CurrentSpeed}km/h{nextStation}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        snap,
+                        AlertKinds.NextSignalBlocked,
+                        "warning",
+                        $"{signalReason}，列车正在减速 速度{snap.CurrentSpeed}km/h{nextStation}"));
                 }
 
                 // ========== Level 3 (critical): 列车已制动（TargetSpeed ≈ 0）==========
                 // 只有确认下一座信号不能通行时，TargetSpeed≈0 才升级为紧急。
                 if (signalClosed && trainBraking && !isStationStop)
                 {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "critical",
-                        TrainName = snap.TrainName,
-                        Message = $"{signalReason}，列车正在制动 速度{snap.CurrentSpeed}km/h{nextStation}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        snap,
+                        AlertKinds.NextSignalBlocked,
+                        "critical",
+                        $"{signalReason}，列车正在制动 速度{snap.CurrentSpeed}km/h{nextStation}"));
                 }
             }
             // ========== 已停车列车 ==========
@@ -124,13 +231,11 @@ namespace RailRouteAssistant
 
                 if (snap.CanDepart && signalClosed)
                 {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "critical",
-                        TrainName = snap.TrainName,
-                        Message = $"可发车但{signalReason}{nextStation}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        snap,
+                        AlertKinds.DepartureSignalBlocked,
+                        "critical",
+                        $"可发车但{signalReason}{nextStation}"));
                 }
                 else if (!snap.CanDepart && !isStationStop && (signalClosed || stoppedForSemaphore))
                 {
@@ -140,13 +245,11 @@ namespace RailRouteAssistant
                     string stoppedReason = signalClosed
                         ? signalReason
                         : "前方信号未开放（可能因区间占用或进路未办理）";
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "critical",
-                        TrainName = snap.TrainName,
-                        Message = $"信号停车{FormatStoppedDuration(snap.NotMovingDuration)} - {stoppedReason}{nextStation}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        snap,
+                        AlertKinds.StoppedAtSignal,
+                        "critical",
+                        $"信号停车{FormatStoppedDuration(snap.NotMovingDuration)} - {stoppedReason}{nextStation}"));
                 }
                 else if (!isStationStop && snap.NotMovingDuration.HasValue)
                 {
@@ -154,13 +257,11 @@ namespace RailRouteAssistant
                     var stoppedSec = snap.NotMovingDuration.Value;
                     if (stoppedSec > 10 && stoppedForSemaphore)
                     {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = snap.TrainName,
-                            Message = $"下一信号未开放，列车正在减速/停车{nextStation}",
-                            TimestampMs = NowMs()
-                        });
+                        alerts.Add(CreateTrainAlert(
+                            snap,
+                            AlertKinds.StoppedAtSignal,
+                            "critical",
+                            $"下一信号未开放，列车正在减速/停车{nextStation}"));
                     }
                 }
             }
@@ -170,13 +271,11 @@ namespace RailRouteAssistant
             if (isRunning && (trainSlowing || trainBraking) &&
                 !string.IsNullOrEmpty(snap.StopReasons) && snap.StopReasons.Contains("Station"))
             {
-                alerts.Add(new AlertInfo
-                {
-                    Level = "info",
-                    TrainName = snap.TrainName,
-                    Message = $"即将进站停车{nextStation}",
-                    TimestampMs = NowMs()
-                });
+                alerts.Add(CreateTrainAlert(
+                    snap,
+                    AlertKinds.ApproachingStation,
+                    "info",
+                    $"即将进站停车{nextStation}"));
             }
 
             // ========== 发车预告 ==========
@@ -190,25 +289,21 @@ namespace RailRouteAssistant
                     msg += $"（延误{FormatDelay(snap.CurrentDepartureScheduleDelaySeconds.Value)}）";
                 }
                 msg += nextStation;
-                alerts.Add(new AlertInfo
-                {
-                    Level = "warning",
-                    TrainName = snap.TrainName,
-                    Message = msg,
-                    TimestampMs = NowMs()
-                });
+                alerts.Add(CreateTrainAlert(
+                    snap,
+                    AlertKinds.DepartureDue,
+                    "warning",
+                    msg));
             }
 
             // ========== 故障 ==========
             if (snap.IsBrokenDown)
             {
-                alerts.Add(new AlertInfo
-                {
-                    Level = "critical",
-                    TrainName = snap.TrainName,
-                    Message = "列车故障！",
-                    TimestampMs = NowMs()
-                });
+                alerts.Add(CreateTrainAlert(
+                    snap,
+                    AlertKinds.TrainBrokenDown,
+                    "critical",
+                    "列车故障！"));
             }
 
             return alerts;
@@ -255,13 +350,15 @@ namespace RailRouteAssistant
                     {
                         if (HasTimeOverlap(stopped: a, approaching: b, out var msg))
                         {
-                            alerts.Add(new AlertInfo
-                            {
-                                Level = "critical",
-                                TrainName = $"{a.TrainName}/{b.TrainName}",
-                                Message = $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
-                                TimestampMs = NowMs()
-                            });
+                            alerts.Add(CreatePairAlert(
+                                a,
+                                b,
+                                AlertKinds.PlatformConflict,
+                                "critical",
+                                $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
+                                $"{a.TrainName}/{b.TrainName}",
+                                a.NextStationName,
+                                a.NextPlatformNumber));
                         }
                         // 时间不重叠（接近车在停站车发车后才到达）→ 不报
                     }
@@ -269,13 +366,15 @@ namespace RailRouteAssistant
                     {
                         if (HasTimeOverlap(stopped: b, approaching: a, out var msg))
                         {
-                            alerts.Add(new AlertInfo
-                            {
-                                Level = "critical",
-                                TrainName = $"{a.TrainName}/{b.TrainName}",
-                                Message = $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
-                                TimestampMs = NowMs()
-                            });
+                            alerts.Add(CreatePairAlert(
+                                a,
+                                b,
+                                AlertKinds.PlatformConflict,
+                                "critical",
+                                $"站台冲突：{msg} {a.NextStationName} {a.NextPlatformNumber}台",
+                                $"{a.TrainName}/{b.TrainName}",
+                                a.NextStationName,
+                                a.NextPlatformNumber));
                         }
                     }
                     else if (aRunning && bRunning)
@@ -290,38 +389,44 @@ namespace RailRouteAssistant
                             const double ClearMargin = 10.0;
                             if (arrA < depB + ClearMargin && arrB < depA + ClearMargin)
                             {
-                                alerts.Add(new AlertInfo
-                                {
-                                    Level = "critical",
-                                    TrainName = $"{a.TrainName}/{b.TrainName}",
-                                    Message = $"站台冲突：{a.TrainName}{FormatRelSec(arrA)}到{FormatRelSec(depA)}发，{b.TrainName}{FormatRelSec(arrB)}到{FormatRelSec(depB)}发 {a.NextStationName} {a.NextPlatformNumber}台",
-                                    TimestampMs = NowMs()
-                                });
+                                alerts.Add(CreatePairAlert(
+                                    a,
+                                    b,
+                                    AlertKinds.PlatformConflict,
+                                    "critical",
+                                    $"站台冲突：{a.TrainName}{FormatRelSec(arrA)}到{FormatRelSec(depA)}发，{b.TrainName}{FormatRelSec(arrB)}到{FormatRelSec(depB)}发 {a.NextStationName} {a.NextPlatformNumber}台",
+                                    $"{a.TrainName}/{b.TrainName}",
+                                    a.NextStationName,
+                                    a.NextPlatformNumber));
                             }
                             // 时间不重叠 → 不报
                         }
                         else
                         {
                             // 无法确定时刻，保守报警告
-                            alerts.Add(new AlertInfo
-                            {
-                                Level = "warning",
-                                TrainName = $"{a.TrainName}/{b.TrainName}",
-                                Message = $"站台可能冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台",
-                                TimestampMs = NowMs()
-                            });
+                            alerts.Add(CreatePairAlert(
+                                a,
+                                b,
+                                AlertKinds.PlatformConflict,
+                                "warning",
+                                $"站台可能冲突：均前往 {a.NextStationName} {a.NextPlatformNumber}台",
+                                $"{a.TrainName}/{b.TrainName}",
+                                a.NextStationName,
+                                a.NextPlatformNumber));
                         }
                     }
                     else if (aStoppedAtStation && bStoppedAtStation)
                     {
                         // 两列都已停在同一个站台：真实冲突（同一站台两列车）
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = $"{a.TrainName}/{b.TrainName}",
-                            Message = $"站台冲突：两列车同时在 {a.NextStationName} {a.NextPlatformNumber}台",
-                            TimestampMs = NowMs()
-                        });
+                        alerts.Add(CreatePairAlert(
+                            a,
+                            b,
+                            AlertKinds.PlatformConflict,
+                            "critical",
+                            $"站台冲突：两列车同时在 {a.NextStationName} {a.NextPlatformNumber}台",
+                            $"{a.TrainName}/{b.TrainName}",
+                            a.NextStationName,
+                            a.NextPlatformNumber));
                     }
                 }
             }
@@ -445,13 +550,14 @@ namespace RailRouteAssistant
                     var common = a.RouteStepTrackIds.Intersect(b.RouteStepTrackIds).ToList();
                     if (common.Count > 0)
                     {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = "critical",
-                            TrainName = $"{a.TrainName}/{b.TrainName}",
-                            Message = $"进路相交：前方{common.Count}段轨道重叠",
-                            TimestampMs = NowMs()
-                        });
+                        alerts.Add(CreatePairAlert(
+                            a,
+                            b,
+                            AlertKinds.RouteIntersection,
+                            "critical",
+                            $"进路相交：前方{common.Count}段轨道重叠",
+                            $"{a.TrainName}/{b.TrainName}",
+                            routeTrackIds: common));
                     }
                 }
             }
@@ -474,26 +580,22 @@ namespace RailRouteAssistant
                     var prepareSec = w.NextPrepareTimeTotalSeconds.Value;
                     if (prepareSec <= 300)
                     {
-                        alerts.Add(new AlertInfo
-                        {
-                            Level = prepareSec <= 60 ? "warning" : "info",
-                            TrainName = w.TrainName,
-                            Message = prepareSec <= 60
+                        alerts.Add(CreateTrainAlert(
+                            w,
+                            AlertKinds.MapEntryUpcoming,
+                            prepareSec <= 60 ? "warning" : "info",
+                            prepareSec <= 60
                                 ? $"即将进入地图（{FormatDelay(prepareSec)}后）-> {w.NextStationName}"
-                                : $"即将进入地图（{FormatDelay(prepareSec)}后）",
-                            TimestampMs = NowMs()
-                        });
+                                : $"即将进入地图（{FormatDelay(prepareSec)}后）"));
                     }
                 }
                 else
                 {
-                    alerts.Add(new AlertInfo
-                    {
-                        Level = "info",
-                        TrainName = w.TrainName,
-                        Message = $"等待进入地图 -> {w.NextStationName}",
-                        TimestampMs = NowMs()
-                    });
+                    alerts.Add(CreateTrainAlert(
+                        w,
+                        AlertKinds.WaitingMapEntry,
+                        "info",
+                        $"等待进入地图 -> {w.NextStationName}"));
                 }
             }
 

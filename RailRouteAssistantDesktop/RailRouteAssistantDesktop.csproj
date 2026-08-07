@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>RailRouteAssistantDesktop</AssemblyName>
     <RootNamespace>RailRouteAssistantDesktop</RootNamespace>
-    <Version>2.6.6</Version>
+    <Version>2.7.0</Version>
     <Nullable>disable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 发布为单文件时也必须把两级离线车次表带入程序，换电脑后才能继续降级查询。 -->
@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\RailRouteHelper.Core\RailRouteHelper.Core.csproj" />
+    <ProjectReference Include="..\src\RailRouteHelper.AssistantSessions\RailRouteHelper.AssistantSessions.csproj" />
+    <ProjectReference Include="..\src\RailRouteHelper.Protocol\RailRouteHelper.Protocol.csproj" />
   </ItemGroup>
 
   <!-- 正式单文件发布把 BepInEx 与插件压缩包嵌入 EXE。开发构建不传此属性，

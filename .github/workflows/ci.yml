@@ -25,4 +25,10 @@ jobs:
           cache-dependency-path: "**/packages.lock.json"
       - run: dotnet restore RailRouteHelper.sln --locked-mode
       - run: dotnet test RailRouteHelper.sln --no-restore --configuration Release
+      - name: Restore desktop assistant
+        if: runner.os == 'Windows'
+        run: dotnet restore RailRouteAssistantDesktop/RailRouteAssistantDesktop.csproj --locked-mode
+      - name: Build desktop assistant
+        if: runner.os == 'Windows'
+        run: dotnet build RailRouteAssistantDesktop/RailRouteAssistantDesktop.csproj --no-restore --configuration Release
 
