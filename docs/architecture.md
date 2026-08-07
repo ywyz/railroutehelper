@@ -48,6 +48,9 @@ Save directory -> Monitoring -> Save Adapter -> schema mapper -> Domain snapshot
   不包含拓扑、排序或状态判断。
 - `RailRouteHelper.Replay`：从协议记录中按顺序产出信封或强类型 Operations
   报告。
+- `RailRouteHelper.AssistantSessions`：定义实时助手的版本化会话消息，提供安全
+  JSONL 记录/回放、结构化告警生命周期和基准列车走廊式时距图投影。它不依赖
+  WinForms 或 BepInEx，实时与回放使用同一投影行为。
 
 `SaveFiles` 不猜测某个游戏版本的字段语义。后续 schema mapper 将经过验证的字段
 映射为领域快照；游戏更新只需替换 mapper，不应改变压缩读取器或协议。

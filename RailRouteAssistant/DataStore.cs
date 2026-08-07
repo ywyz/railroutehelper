@@ -1,5 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace RailRouteAssistant
 {
@@ -103,12 +107,105 @@ namespace RailRouteAssistant
     /// <summary>
     /// 告警信息
     /// </summary>
+    public static class AlertKinds
+    {
+        // Keep these values stable: consumers use Kind together with train IDs to
+        // identify an alert across severity changes and changing display text.
+        public const string NextSignalBlocked = "next-signal-blocked";
+        public const string DepartureSignalBlocked = "departure-signal-blocked";
+        public const string StoppedAtSignal = "stopped-at-signal";
+        public const string ApproachingStation = "approaching-station";
+        public const string DepartureDue = "departure-due";
+        public const string TrainBrokenDown = "train-broken-down";
+        public const string PlatformConflict = "platform-conflict";
+        public const string RouteIntersection = "route-intersection";
+        public const string MapEntryUpcoming = "map-entry-upcoming";
+        public const string WaitingMapEntry = "waiting-map-entry";
+    }
+
     public class AlertInfo
     {
         public string Level;    // "critical" / "warning" / "info"
+        public string Severity; // Structured severity; Level remains for old clients.
+        public string Kind;     // Stable kebab-case alert kind.
+        public string Fingerprint; // Stable identity; excludes display text and severity.
+        public string PrimaryTrainId;
+        public List<string> RelatedTrainIds = new List<string>();
+        public string StationName;
+        public int PlatformNumber;
+        public List<string> RouteTrackIds = new List<string>();
+        public string Summary;
         public string TrainName;
         public string Message;
         public long TimestampMs;
+    }
+
+    /// <summary>
+    /// Computes the same semantic alert identity used by the desktop assistant
+    /// session core. Display labels, severity, and timestamps are deliberately
+    /// excluded so a severity escalation does not create a new alert identity.
+    /// </summary>
+    public static class AlertFingerprint
+    {
+        public static string Compute(AlertInfo alert)
+        {
+            if (alert == null) return "";
+
+            var primary = string.IsNullOrWhiteSpace(alert.PrimaryTrainId)
+                ? alert.TrainName
+                : alert.PrimaryTrainId;
+            var station = alert.StationName ?? "";
+            var related = string.Join(",", StableValues(alert.RelatedTrainIds));
+            var routeTracks = string.Join(",", StableValues(alert.RouteTrackIds));
+
+            var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["kind"] = alert.Kind ?? "",
+                ["platformNumber"] = alert.PlatformNumber.ToString(CultureInfo.InvariantCulture),
+                ["primaryTrainId"] = primary ?? "",
+                ["relatedTrainIds"] = related,
+                ["routeTrackIds"] = routeTracks,
+                ["stationName"] = station
+            };
+
+            var canonical = new StringBuilder();
+            // This order mirrors ObservedAlert.ComputeFingerprint in the desktop
+            // core: code, subject, station, then attributes sorted by key.
+            AppendCanonical(canonical, alert.Kind);
+            AppendCanonical(canonical, primary);
+            AppendCanonical(canonical, station);
+            foreach (var pair in attributes.OrderBy(item => item.Key, StringComparer.Ordinal))
+            {
+                AppendCanonical(canonical, pair.Key);
+                AppendCanonical(canonical, pair.Value);
+            }
+
+            using (var sha = SHA256.Create())
+            {
+                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString()));
+                var result = new StringBuilder(bytes.Length * 2);
+                foreach (var value in bytes)
+                    result.Append(value.ToString("x2", CultureInfo.InvariantCulture));
+                return result.ToString();
+            }
+        }
+
+        private static IEnumerable<string> StableValues(IEnumerable<string> values)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(value => !string.IsNullOrEmpty(value))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal);
+        }
+
+        private static void AppendCanonical(StringBuilder builder, string value)
+        {
+            var normalized = (value ?? "").Trim().ToUpperInvariant();
+            builder.Append(normalized.Length.ToString(CultureInfo.InvariantCulture))
+                .Append(':')
+                .Append(normalized)
+                .Append('|');
+        }
     }
 
     /// <summary>

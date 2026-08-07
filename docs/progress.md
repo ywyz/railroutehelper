@@ -1,6 +1,6 @@
 # 项目进度
 
-更新时间：2026-07-29（调度助手迭代）
+更新时间：2026-08-07（调度会话、告警中心与时距运行图）
 
 ## 第一阶段：基础设施
 
@@ -161,6 +161,19 @@
 - [x] 调向状态：读取游戏原生 `StopAndReverse`/`ReverseOnceStopped`，停站时显示“需调向”并语音提示
 - [x] 站台冲突检测排除方向站（站名含"方向"），只有中间停车站才报冲突
 - [x] HTTP API 暴露 `nextPrepareSec`/`nextArrivalSec` 字段
+- [x] 版本化调度会话：session start/train upsert/frame/alert action/session end 五类 JSONL 消息
+- [x] 追加式安全记录：拒绝覆盖、周期刷新、末尾截断恢复和严格中间行/序号校验
+- [x] 动态列车状态无损记录；时刻表按内容变化 upsert，避免每秒重复写入静态计划
+- [x] 告警结构化字段与稳定 fingerprint；保留旧版 `level/train/message` 兼容字段
+- [x] 告警中心：critical 即时、warning 两帧防抖、三帧恢复、断线 stale、复发新实例
+- [x] 告警确认、静音、恢复提示及其会话记录/回放
+- [x] 会话回放：时间轴、单帧、按告警跳转和 0.5x/1x/2x/5x/10x 动态时间播放
+- [x] 走廊式时距运行图：基准列车站序、共享两站过滤、反方向识别、计划/实际/预测线
+- [x] RelativeTimes 保守显示、跨日游戏秒坐标、实时两小时历史与完整会话回放
+- [x] CI 在 Windows 额外锁定还原并构建桌面程序
+
+本轮自动验证为 70 项测试通过；插件 net472 与桌面 Release 构建均为 0 警告、0 错误。
+详细行为和协议见 [assistant-sessions.md](assistant-sessions.md)。
 
 ### 已移除
 

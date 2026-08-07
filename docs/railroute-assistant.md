@@ -228,8 +228,13 @@ TTS 合成的内容包括：
 
 ### 桌面程序 UI
 
+`2.7.0` 起主窗口分为“实时调度”“告警中心”“时距运行图”“会话回放”四页。
+实时页保留原来的即时告警和列车列表；告警中心提供防抖、确认、静音、失联和恢复
+历史；时距图按选定基准列车生成车站走廊；会话页负责安全记录和确定性回放。详细
+规则见 [assistant-sessions.md](assistant-sessions.md)。
+
 - **上半部分（列车列表区）**：按状态排序，不同车次类型用不同背景色区分
-- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.6.4`；若标题没有版本号，说明启动的是旧版 EXE
+- **版本号**：窗口标题栏显示当前桌面程序版本，例如 `Rail Route 调度助手 v2.7.0`；若标题没有版本号，说明启动的是旧版 EXE
 - **搜索框**：位于“所有列车”标题下方；输入完整或部分车号即时筛选，Enter 选中第一项，Esc 清空；点击被筛选隐藏的告警车次时会自动切换搜索条件
 - **下半部分（告警区）**：按紧急 > 警告 > 信息排序
 
@@ -452,7 +457,10 @@ v2.6.4 时安装器会覆盖插件，因此升级完成后需要重启游戏一�
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| `apiVersion` | number | localhost API 契约版本；结构化告警首次发布为 `1` |
+| `pluginVersion` | string \| null | 当前 BepInEx 插件版本，用于桌面端诊断版本不一致 |
 | `gameTime` | string \| null | 游戏内模拟时钟，格式 `HH:MM:SS`，由 `Game.Time.ITimeController.CurrentTime` 读取 |
+| `gameTimeSeconds` | number \| null | 未取模的游戏绝对秒数，供会话跨日记录和时距图使用 |
 | `delay` | number | 游戏原始的累计延误值；不用于判断单次发车是否晚点 |
 | `scheduledStops` | array | 当前地图内计划停车表；含站名、站台、到发时刻、停车分钟和相对时刻标志，通过站已排除 |
 | `lastArrivalScheduleDeviationSec` | number \| null | 最近一次实际到站首次观察时固定的“游戏时钟 - 该站计划到达时刻”；负数为早点、正数为晚点 |
@@ -466,6 +474,11 @@ v2.6.4 时安装器会覆盖插件，因此升级完成后需要重启游戏一�
 | `mapExitTimeSec` | number \| null | 列车离开当前游戏地图的计划时刻（游戏内绝对秒数），取自末个 `StationVisit.To`（含通过站） |
 | `mapEntryStation` | string | 列车进入当前游戏地图的站名（取自首个 `StationVisit`，含通过站） |
 | `mapExitStation` | string | 列车离开当前游戏地图的站名（取自末个 `StationVisit`，含通过站），即游戏地图内终点站 |
+
+`alerts[]` 保留旧版 `level`、`train`、`message`，并增加 `kind`、`severity`、
+`primaryTrainId`、`relatedTrainIds`、`stationName`、`platformNumber`、
+`routeTrackIds`、`summary`、`fingerprint` 和 `timestampMs`。fingerprint 只由稳定语义
+字段计算，不包含展示文案、严重度或时间戳。
 
 ## 日志
 
@@ -562,6 +575,10 @@ RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 ├── GameInstallationManager.cs # 一体包首次安装、Steam 路径发现与自动启动
 ├── TrainDetailsForm.cs        # 双击车次后的始发终到与地图内停车表弹窗
 ├── MainForm.cs                # 主窗口，告警列表 + 列车列表
+├── AssistantApiClient.cs       # localhost API 强类型解析
+├── AssistantSessionAdapter.cs  # HTTP DTO 与会话模型转换
+├── WorkspaceUi.cs              # 告警中心、时距图、记录与回放工作区
+├── TimetableGraphControl.cs     # 双缓冲车站—时间自绘控件
 ├── TrainInfoService.cs        # 12306 在线 → 路路通 → 静态 12306 快照的车次始发终到查询
 ├── VoiceEngine.cs             # 语音播报引擎，音频拼接 + TTS 兜底
 ├── assets/audio/              # 预录音频素材（69 个文件）
@@ -569,6 +586,8 @@ RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
 └── RailRouteAssistantDesktop.csproj
 
 tools/ExportLulutongTrainRoutes/ # 从用户本机 APK 导出离线车次降级表
+
+src/RailRouteHelper.AssistantSessions/ # 会话协议、记录回放、告警与时距图投影
 ```
 
 ## 免责声明

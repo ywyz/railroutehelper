@@ -12,9 +12,9 @@ using System.Windows.Forms;
 
 namespace RailRouteAssistantDesktop
 {
-    public class MainForm : Form
+    public partial class MainForm : Form
     {
-        private readonly HttpClient _http;
+        private readonly AssistantApiClient _api;
         private readonly System.Windows.Forms.Timer _timer;
         private readonly TrainInfoService _trainInfo;
 
@@ -66,8 +66,8 @@ namespace RailRouteAssistantDesktop
 
         public MainForm()
         {
-            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            _trainInfo = new TrainInfoService(_http);
+            _api = new AssistantApiClient(new HttpClient { Timeout = TimeSpan.FromSeconds(8) });
+            _trainInfo = new TrainInfoService(_api.HttpClient);
             SetupUI();
             // 初始化语音播报引擎（音频目录 = 输出目录/assets/audio）
                 string audioDir = Path.Combine(AppContext.BaseDirectory, "assets", "audio");
@@ -329,6 +329,9 @@ namespace RailRouteAssistantDesktop
 
             // 窗口尺寸变化时重新定位静音开关
             Resize += (s, e) => PositionMuteCheckbox();
+
+            // 新版工作区：保留原实时调度控件，外层增加告警、运行图和会话回放标签页。
+            BuildWorkspaceTabs();
         }
 
         /// <summary>把静音开关定位到状态栏右侧</summary>
@@ -572,105 +575,16 @@ namespace RailRouteAssistantDesktop
 
         private async Task RefreshData()
         {
+            if (_replayMode) return;
             try
             {
-                var resp = await _http.GetStringAsync("http://localhost:8787/data");
-                var root = JsonDocument.Parse(resp).RootElement;
+                var snapshot = await _api.GetSnapshotAsync();
+                _gameReady = snapshot.GameReady;
+                _gameTime = snapshot.GameTime;
+                _alerts = snapshot.Alerts;
+                _trains = snapshot.Trains;
 
-                _gameReady = root.GetProperty("gameReady").GetBoolean();
-
-                // 游戏内时间
-                if (root.TryGetProperty("gameTime", out var gtEl) && gtEl.ValueKind == JsonValueKind.String)
-                    _gameTime = gtEl.GetString() ?? "";
-                else
-                    _gameTime = "";
-
-                _alerts.Clear();
-                if (root.TryGetProperty("alerts", out var alertsEl))
-                    foreach (var a in alertsEl.EnumerateArray())
-                        _alerts.Add(new AlertData
-                        {
-                            Level = a.GetProperty("level").GetString(),
-                            TrainName = a.GetProperty("train").GetString(),
-                            Message = a.GetProperty("message").GetString()
-                        });
-
-                _trains.Clear();
-                if (root.TryGetProperty("trains", out var trainsEl))
-                {
-                    foreach (var t in trainsEl.EnumerateArray())
-                    {
-                        var train = new TrainData
-                        {
-                            Id = t.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : "",
-                            Name = t.GetProperty("name").GetString() ?? "?",
-                            Speed = t.GetProperty("speed").GetInt32(),
-                            TargetSpeed = t.GetProperty("targetSpeed").GetSingle(),
-                            Delay = t.GetProperty("delay").GetDouble(),
-                            CanDepart = t.GetProperty("canDepart").GetBoolean(),
-                            Finished = t.GetProperty("finished").GetBoolean(),
-                            BrokenDown = t.GetProperty("brokenDown").GetBoolean(),
-                            OnBoard = t.GetProperty("onBoard").GetBoolean(),
-                            Waiting = t.GetProperty("waiting").GetBoolean(),
-                            Lookahead = t.GetProperty("lookahead").GetInt32(),
-                            NeedsRoute = t.GetProperty("needsRoute").GetBoolean(),
-                            HasSignal = t.GetProperty("hasSignal").GetBoolean(),
-                            SignalState = t.GetProperty("signalState").GetString() ?? "",
-                            Platform = t.GetProperty("platform").GetInt32(),
-                            NextStation = t.GetProperty("nextStation").GetString() ?? "",
-                            NextStationNonStop = t.TryGetProperty("nextStationNonStop", out var nsn) && nsn.ValueKind is JsonValueKind.True or JsonValueKind.False && nsn.GetBoolean(),
-                            ActualVisitCount = t.TryGetProperty("actualVisitCount", out var avc) && avc.ValueKind == JsonValueKind.Number ? avc.GetInt32() : 0,
-                            ScheduledVisitCount = t.TryGetProperty("scheduledVisitCount", out var svc) && svc.ValueKind == JsonValueKind.Number ? svc.GetInt32() : 0,
-                            ScheduledVisitIndex = t.TryGetProperty("scheduledVisitIndex", out var svi) && svi.ValueKind == JsonValueKind.Number ? svi.GetInt32() : -1,
-                            LastVisitStation = t.TryGetProperty("lastVisitStation", out var lvs) && lvs.ValueKind == JsonValueKind.String ? lvs.GetString() ?? "" : "",
-                            LastVisitPlatform = t.TryGetProperty("lastVisitPlatform", out var lvp) && lvp.ValueKind == JsonValueKind.Number ? lvp.GetInt32() : 0,
-                            LastVisitNonStop = t.TryGetProperty("lastVisitNonStop", out var lvns) && lvns.ValueKind is JsonValueKind.True or JsonValueKind.False && lvns.GetBoolean(),
-                            LastVisitStopMinutes = t.TryGetProperty("lastVisitStopMinutes", out var lvsm) && lvsm.ValueKind == JsonValueKind.Number ? lvsm.GetInt32() : 0,
-                            LastVisitDeparted = t.TryGetProperty("lastVisitDeparted", out var lvd) && lvd.ValueKind is JsonValueKind.True or JsonValueKind.False && lvd.GetBoolean(),
-                            LastArrivalScheduleDeviationSec = t.TryGetProperty("lastArrivalScheduleDeviationSec", out var las) && las.ValueKind == JsonValueKind.Number ? las.GetDouble() : null,
-                            LastDepartureScheduleDelaySec = t.TryGetProperty("lastDepartureScheduleDelaySec", out var lds) && lds.ValueKind == JsonValueKind.Number ? lds.GetDouble() : null,
-                            RequiresDirectionChange = t.TryGetProperty("requiresDirectionChange", out var rdc) && rdc.ValueKind is JsonValueKind.True or JsonValueKind.False && rdc.GetBoolean(),
-                            CurrentStation = t.TryGetProperty("currentStation", out var cs) && cs.ValueKind == JsonValueKind.String ? cs.GetString() ?? "" : "",
-                            CurrentPlatform = t.TryGetProperty("currentPlatform", out var cp) && cp.ValueKind == JsonValueKind.Number ? cp.GetInt32() : 0,
-                            CurrentStopMinutes = t.TryGetProperty("currentStopMinutes", out var csm) && csm.ValueKind == JsonValueKind.Number ? csm.GetInt32() : 0,
-                            DepartureRemainingSec = t.TryGetProperty("departureRemainingSec", out var drs) && drs.ValueKind == JsonValueKind.Number ? drs.GetDouble() : null,
-                            CurrentDepartureScheduleDelaySec = t.TryGetProperty("currentDepartureScheduleDelaySec", out var cds) && cds.ValueKind == JsonValueKind.Number ? cds.GetDouble() : null,
-                            StopReasons = t.GetProperty("stopReasons").GetString() ?? "",
-                            NextPrepareSec = t.TryGetProperty("nextPrepareSec", out var np) && np.ValueKind == JsonValueKind.Number ? np.GetDouble() : null,
-                            NextArrivalSec = t.TryGetProperty("nextArrivalSec", out var na) && na.ValueKind == JsonValueKind.Number ? na.GetDouble() : null,
-                            NotMovingSince = t.TryGetProperty("notMovingSince", out var nm) && nm.ValueKind == JsonValueKind.Number ? nm.GetDouble() : null,
-                            SignalAllocationState = t.TryGetProperty("signalAllocationState", out var sa) && sa.ValueKind == JsonValueKind.Number ? sa.GetInt32() : -1,
-                            FrontAllocationState = t.TryGetProperty("frontAllocationState", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : -1,
-                            MapEntryTimeSec = t.TryGetProperty("mapEntryTimeSec", out var me) && me.ValueKind == JsonValueKind.Number ? me.GetDouble() : null,
-                            MapExitTimeSec = t.TryGetProperty("mapExitTimeSec", out var mx) && mx.ValueKind == JsonValueKind.Number ? mx.GetDouble() : null,
-                            MapEntryStation = t.TryGetProperty("mapEntryStation", out var mes) && mes.ValueKind == JsonValueKind.String ? mes.GetString() ?? "" : "",
-                            MapExitStation = t.TryGetProperty("mapExitStation", out var mxs) && mxs.ValueKind == JsonValueKind.String ? mxs.GetString() ?? "" : "",
-                            MapEntryPlatform = t.TryGetProperty("mapEntryPlatform", out var mep) && mep.ValueKind == JsonValueKind.Number ? mep.GetInt32() : 0,
-                            MapExitPlatform = t.TryGetProperty("mapExitPlatform", out var mxp) && mxp.ValueKind == JsonValueKind.Number ? mxp.GetInt32() : 0,
-                            MapEntryNonStop = t.TryGetProperty("mapEntryNonStop", out var mens) && mens.ValueKind is JsonValueKind.True or JsonValueKind.False && mens.GetBoolean(),
-                            MapExitNonStop = t.TryGetProperty("mapExitNonStop", out var mxns) && mxns.ValueKind is JsonValueKind.True or JsonValueKind.False && mxns.GetBoolean()
-                        };
-
-                        if (t.TryGetProperty("scheduledStops", out var stopsEl) && stopsEl.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var stop in stopsEl.EnumerateArray())
-                            {
-                                train.ScheduledStops.Add(new ScheduledStopData
-                                {
-                                    Station = stop.TryGetProperty("station", out var station) && station.ValueKind == JsonValueKind.String ? station.GetString() ?? "" : "",
-                                    Platform = stop.TryGetProperty("platform", out var platform) && platform.ValueKind == JsonValueKind.Number ? platform.GetInt32() : 0,
-                                    ArrivalTimeSec = stop.TryGetProperty("arrivalTimeSec", out var arrival) && arrival.ValueKind == JsonValueKind.Number ? arrival.GetDouble() : null,
-                                    DepartureTimeSec = stop.TryGetProperty("departureTimeSec", out var departure) && departure.ValueKind == JsonValueKind.Number ? departure.GetDouble() : null,
-                                    StopMinutes = stop.TryGetProperty("stopMinutes", out var stopMinutes) && stopMinutes.ValueKind == JsonValueKind.Number ? stopMinutes.GetInt32() : 0,
-                                    RelativeTimes = stop.TryGetProperty("relativeTimes", out var relative) && relative.ValueKind is JsonValueKind.True or JsonValueKind.False && relative.GetBoolean(),
-                                    NonStop = stop.TryGetProperty("nonStop", out var nonStop) && nonStop.ValueKind is JsonValueKind.True or JsonValueKind.False && nonStop.GetBoolean()
-                                });
-                            }
-                        }
-
-                        _trains.Add(train);
-                    }
-                }
+                RecordLiveSnapshot(snapshot);
 
                 // 每趟出现的列车都在后台按车号精确查询；不阻塞本次 UI/语音刷新。
                 PreloadTrainInfo();
@@ -689,11 +603,13 @@ namespace RailRouteAssistantDesktop
             }
             catch (HttpRequestException)
             {
+                RecordConnectionFailure();
                 _statusLabel.Text = "  未连接游戏 - 请启动 Rail Route";
                 _statusLabel.ForeColor = Color.OrangeRed;
             }
             catch (Exception ex)
             {
+                RecordConnectionFailure();
                 _statusLabel.Text = $"  错误: {ex.Message}";
                 _statusLabel.ForeColor = Color.Red;
             }
@@ -820,6 +736,7 @@ namespace RailRouteAssistantDesktop
             _alertList.EndUpdate();
 
             RefreshTrainList();
+            UpdateWorkspacePanels();
         }
 
         /// <summary>按搜索框筛选并重建列车列表，同时保留仍可见的选中车号和滚动位置。</summary>
@@ -1003,6 +920,7 @@ namespace RailRouteAssistantDesktop
         /// </summary>
         private void DetectAndAnnounce()
         {
+            if (_replayMode) return;
             if (_voice == null) return;
             if (_muteCheck?.Checked == true) return;
             if (!_trainInfo.IsLoaded) return;  // 车次库未加载则不播报（缺终到站）
@@ -1344,7 +1262,8 @@ namespace RailRouteAssistantDesktop
         {
             return new TrainData
             {
-                Id = t.Id, Name = t.Name, Speed = t.Speed, TargetSpeed = t.TargetSpeed, Delay = t.Delay,
+                Id = t.Id, Name = t.Name, Speed = t.Speed, TargetSpeed = t.TargetSpeed, MaxSpeed = t.MaxSpeed, Delay = t.Delay,
+                HasRoute = t.HasRoute, RouteTotal = t.RouteTotal, RouteCurrent = t.RouteCurrent, RouteRemaining = t.RouteRemaining,
                 CanDepart = t.CanDepart, Finished = t.Finished, BrokenDown = t.BrokenDown,
                 OnBoard = t.OnBoard, Waiting = t.Waiting, Lookahead = t.Lookahead, NeedsRoute = t.NeedsRoute,
                 HasSignal = t.HasSignal, SignalState = t.SignalState,
@@ -1548,12 +1467,32 @@ namespace RailRouteAssistantDesktop
         {
             _timer.Stop();
             _voice?.Dispose();
-            _http.Dispose();
+            _api.Dispose();
+            DisposeWorkspace();
             base.OnFormClosing(e);
         }
     }
 
-    public class AlertData { public string Level; public string TrainName; public string Message; }
+    public class AlertData
+    {
+        public string Id;
+        public string Level;
+        public string TrainName;
+        public string Message;
+        public string Kind;
+        public string PrimaryTrainId;
+        public List<string> RelatedTrainIds = new();
+        public string StationName;
+        public int? PlatformNumber;
+        public List<string> RouteTrackIds = new();
+        public string Status = "active";
+        public string FirstSeen;
+        public string Duration;
+        public int OccurrenceCount = 1;
+        public string LastSeen;
+        public bool Acknowledged;
+        public string MutedUntil;
+    }
 
     /// <summary>语音播报用的列车上一帧状态（用于检测状态变化）</summary>
     public struct TrainPrevState
@@ -1575,6 +1514,7 @@ namespace RailRouteAssistantDesktop
     public class TrainData
     {
         public string Id; public string Name; public int Speed; public float TargetSpeed; public double Delay;
+        public float MaxSpeed; public bool HasRoute; public int RouteTotal; public int RouteCurrent; public int RouteRemaining;
         public bool CanDepart; public bool Finished; public bool BrokenDown;
         public bool OnBoard; public bool Waiting;
         public int Lookahead; public bool NeedsRoute;

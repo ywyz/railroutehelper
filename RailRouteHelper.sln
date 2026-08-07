@@ -36,6 +36,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Web", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.Web.Tests", "tests\RailRouteHelper.Web.Tests\RailRouteHelper.Web.Tests.csproj", "{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B9A0110-09D5-426B-9F04-5BC5594384BA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.AssistantSessions", "src\RailRouteHelper.AssistantSessions\RailRouteHelper.AssistantSessions.csproj", "{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A9A8CD1E-BEDC-481E-8A65-51C188FC9320}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RailRouteHelper.AssistantSessions.Tests", "tests\RailRouteHelper.AssistantSessions.Tests\RailRouteHelper.AssistantSessions.Tests.csproj", "{D58550AE-FCD2-4BEF-B56A-4C635797BA20}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -110,5 +118,17 @@ Global
 		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4A3C2F91-3120-4F03-A0DB-C2A96AC84A77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D58550AE-FCD2-4BEF-B56A-4C635797BA20}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D58550AE-FCD2-4BEF-B56A-4C635797BA20}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D58550AE-FCD2-4BEF-B56A-4C635797BA20}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D58550AE-FCD2-4BEF-B56A-4C635797BA20}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{8CE9BA0F-A5C7-4A8F-A6E9-BBE01E763D56} = {9B9A0110-09D5-426B-9F04-5BC5594384BA}
+		{D58550AE-FCD2-4BEF-B56A-4C635797BA20} = {A9A8CD1E-BEDC-481E-8A65-51C188FC9320}
 	EndGlobalSection
 EndGlobal

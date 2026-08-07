@@ -97,10 +97,15 @@ namespace RailRouteAssistant
             sb.Append("{");
 
             // 元数据
+            sb.Append("\"apiVersion\":1,");
+            sb.Append("\"pluginVersion\":").Append(JsonNullable(TryGetPluginVersion())).Append(",");
             sb.Append("\"gameReady\":").Append(gameReady.ToString().ToLower()).Append(",");
             sb.Append("\"lastUpdate\":\"").Append(lastUpdate.ToString("HH:mm:ss")).Append("\",");
             sb.Append("\"serverTime\":\"").Append(DateTime.Now.ToString("HH:mm:ss")).Append("\",");
             sb.Append("\"gameTime\":").Append(gameTimeSec.HasValue ? $"\"{FormatGameTime(gameTimeSec.Value)}\"" : "null").Append(",");
+            sb.Append("\"gameTimeSeconds\":").Append(gameTimeSec.HasValue
+                ? gameTimeSec.Value.ToString("R", CultureInfo.InvariantCulture)
+                : "null").Append(",");
 
             // 列车列表
             sb.Append("\"trains\":[");
@@ -113,7 +118,7 @@ namespace RailRouteAssistant
                 sb.Append("\"name\":").Append(JsonStr(s.TrainName)).Append(",");
                 sb.Append("\"speed\":").Append(s.CurrentSpeed).Append(",");
                 sb.Append("\"maxSpeed\":").Append(s.MaxSpeed).Append(",");
-                sb.Append("\"targetSpeed\":").Append(s.TargetSpeed.ToString("F1")).Append(",");
+                sb.Append("\"targetSpeed\":").Append(s.TargetSpeed.ToString("F1", CultureInfo.InvariantCulture)).Append(",");
                 sb.Append("\"delay\":").Append(s.DelaySeconds.ToString("R", CultureInfo.InvariantCulture)).Append(",");
                 sb.Append("\"canDepart\":").Append(s.CanDepart.ToString().ToLower()).Append(",");
                 sb.Append("\"finished\":").Append(s.FinishedSchedule.ToString().ToLower()).Append(",");
@@ -163,12 +168,12 @@ namespace RailRouteAssistant
                 sb.Append("\"currentStation\":").Append(JsonStr(s.CurrentStationName)).Append(",");
                 sb.Append("\"currentPlatform\":").Append(s.CurrentPlatformNumber).Append(",");
                 sb.Append("\"currentStopMinutes\":").Append(s.CurrentStopDurationMinutes).Append(",");
-                sb.Append("\"departureRemainingSec\":").Append(s.DepartureRemainingSeconds.HasValue ? s.DepartureRemainingSeconds.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"departureRemainingSec\":").Append(s.DepartureRemainingSeconds.HasValue ? s.DepartureRemainingSeconds.Value.ToString("F0", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"currentDepartureScheduleDelaySec\":").Append(s.CurrentDepartureScheduleDelaySeconds.HasValue ? s.CurrentDepartureScheduleDelaySeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"stopReasons\":").Append(JsonStr(s.StopReasons)).Append(",");
-                sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
-                sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0") : "null").Append(",");
-                sb.Append("\"notMovingSince\":").Append(s.NotMovingDuration.HasValue ? s.NotMovingDuration.Value.ToString("F0") : "null").Append(",");
+                sb.Append("\"nextPrepareSec\":").Append(s.NextPrepareTimeTotalSeconds.HasValue ? s.NextPrepareTimeTotalSeconds.Value.ToString("F0", CultureInfo.InvariantCulture) : "null").Append(",");
+                sb.Append("\"nextArrivalSec\":").Append(s.NextArrivalTimeTotalSeconds.HasValue ? s.NextArrivalTimeTotalSeconds.Value.ToString("F0", CultureInfo.InvariantCulture) : "null").Append(",");
+                sb.Append("\"notMovingSince\":").Append(s.NotMovingDuration.HasValue ? s.NotMovingDuration.Value.ToString("F0", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"mapEntryTimeSec\":").Append(s.MapEntryGameTimeSeconds.HasValue ? s.MapEntryGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"mapExitTimeSec\":").Append(s.MapExitGameTimeSeconds.HasValue ? s.MapExitGameTimeSeconds.Value.ToString("R", CultureInfo.InvariantCulture) : "null").Append(",");
                 sb.Append("\"mapEntryStation\":").Append(JsonStr(s.MapEntryStationName ?? "")).Append(",");
@@ -186,12 +191,7 @@ namespace RailRouteAssistant
             for (int i = 0; i < alerts.Count; i++)
             {
                 if (i > 0) sb.Append(",");
-                var a = alerts[i];
-                sb.Append("{");
-                sb.Append("\"level\":").Append(JsonStr(a.Level)).Append(",");
-                sb.Append("\"train\":").Append(JsonStr(a.TrainName)).Append(",");
-                sb.Append("\"message\":").Append(JsonStr(a.Message));
-                sb.Append("}");
+                AppendAlertJson(sb, alerts[i]);
             }
             sb.Append("]");
 
@@ -207,26 +207,103 @@ namespace RailRouteAssistant
             for (int i = 0; i < alerts.Count; i++)
             {
                 if (i > 0) sb.Append(",");
-                var a = alerts[i];
-                sb.Append("{");
-                sb.Append("\"level\":").Append(JsonStr(a.Level)).Append(",");
-                sb.Append("\"train\":").Append(JsonStr(a.TrainName)).Append(",");
-                sb.Append("\"message\":").Append(JsonStr(a.Message));
-                sb.Append("}");
+                AppendAlertJson(sb, alerts[i]);
             }
             sb.Append("]}");
             return sb.ToString();
         }
 
+        private static void AppendAlertJson(StringBuilder sb, AlertInfo alert)
+        {
+            if (alert == null)
+            {
+                sb.Append("null");
+                return;
+            }
+
+            sb.Append("{");
+            // Keep the original fields first for old desktop clients.
+            sb.Append("\"level\":").Append(JsonStr(alert.Level)).Append(",");
+            sb.Append("\"train\":").Append(JsonStr(alert.TrainName)).Append(",");
+            sb.Append("\"message\":").Append(JsonStr(alert.Message)).Append(",");
+            var fingerprint = string.IsNullOrWhiteSpace(alert.Fingerprint)
+                ? AlertFingerprint.Compute(alert)
+                : alert.Fingerprint;
+            sb.Append("\"fingerprint\":").Append(JsonStr(fingerprint)).Append(",");
+            sb.Append("\"timestampMs\":").Append(alert.TimestampMs.ToString(CultureInfo.InvariantCulture)).Append(",");
+            sb.Append("\"kind\":").Append(JsonStr(alert.Kind)).Append(",");
+            sb.Append("\"severity\":").Append(JsonStr(alert.Severity ?? alert.Level)).Append(",");
+            sb.Append("\"primaryTrainId\":").Append(JsonStr(alert.PrimaryTrainId)).Append(",");
+            sb.Append("\"relatedTrainIds\":");
+            AppendStringArray(sb, alert.RelatedTrainIds);
+            sb.Append(",\"stationName\":").Append(JsonStr(alert.StationName)).Append(",");
+            sb.Append("\"platformNumber\":").Append(alert.PlatformNumber.ToString(CultureInfo.InvariantCulture)).Append(",");
+            sb.Append("\"routeTrackIds\":");
+            AppendStringArray(sb, alert.RouteTrackIds);
+            sb.Append(",\"summary\":").Append(JsonStr(alert.Summary ?? alert.Message));
+            sb.Append("}");
+        }
+
+        private static void AppendStringArray(StringBuilder sb, System.Collections.Generic.IEnumerable<string> values)
+        {
+            sb.Append("[");
+            var first = true;
+            if (values != null)
+            {
+                foreach (var value in values)
+                {
+                    if (!first) sb.Append(",");
+                    first = false;
+                    sb.Append(JsonStr(value));
+                }
+            }
+            sb.Append("]");
+        }
+
         private static string JsonStr(string s)
         {
-            if (string.IsNullOrEmpty(s)) return "\"\"";
-            var escaped = s.Replace("\\", "\\\\")
-                           .Replace("\"", "\\\"")
-                           .Replace("\n", "\\n")
-                           .Replace("\r", "\\r")
-                           .Replace("\t", "\\t");
-            return $"\"{escaped}\"";
+            if (s == null) return "\"\"";
+
+            var escaped = new StringBuilder(s.Length + 2);
+            escaped.Append('"');
+            foreach (var c in s)
+            {
+                switch (c)
+                {
+                    case '\\': escaped.Append("\\\\"); break;
+                    case '"': escaped.Append("\\\""); break;
+                    case '\b': escaped.Append("\\b"); break;
+                    case '\f': escaped.Append("\\f"); break;
+                    case '\n': escaped.Append("\\n"); break;
+                    case '\r': escaped.Append("\\r"); break;
+                    case '\t': escaped.Append("\\t"); break;
+                    default:
+                        if (c < 0x20)
+                            escaped.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                        else
+                            escaped.Append(c);
+                        break;
+                }
+            }
+            escaped.Append('"');
+            return escaped.ToString();
+        }
+
+        private static string JsonNullable(string s)
+        {
+            return s == null ? "null" : JsonStr(s);
+        }
+
+        private static string TryGetPluginVersion()
+        {
+            try
+            {
+                return Plugin.PluginVersion;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
