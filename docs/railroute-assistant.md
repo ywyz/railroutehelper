@@ -53,7 +53,11 @@ Rail Route 游戏 (Unity 进程)
   `IGameControllers` 上名称含 Level/Map/Scenario 等的属性，再回退到 Unity 活动
   场景名；检测失败时返回 null）。LevelController 等对象的 `name` 属性返回的是
   Unity 场景名（如 Bootstrap/Main），不是真实地图名；`MapNameReader` 会排除这些
-  场景名，并递归扫描子属性找含中文的真实地图名。
+  场景名，并递归扫描子属性找含中文的真实地图名。扫描在后台 `PollLoop` 线程执行，
+  因此每个属性的 getter 在调用前都先经 `IsSafeToRead` 按类型/名称过滤——只读
+  字符串属性或可安全递归的引用类型属性，跳过 `SavingPossible`/`IsXxx`/`CanXxx`
+  等会在内部调用 Unity `FindObjectOfType` 的有副作用 getter，避免在非主线程触发
+  UnityPlayer 原生层崩溃（该类崩溃无法被托管 try-catch 捕获）。
 - 地图名匹配内置规则后，全图所有“含‘场’且不含‘站’”或“以‘上行’/‘下行’结尾
   且不含‘站’”的子站点前置母站名。含“站”的名称（如“南京站高速场”）已被地图作者
   写成完整名，不再前置母站。

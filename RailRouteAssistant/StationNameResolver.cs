@@ -247,6 +247,9 @@ namespace RailRouteAssistant
                 {
                     if (prop.GetMethod == null) continue;
                     if (!NameOrTypeMatchesKeyword(prop)) continue;
+                    // 先按类型/名称过滤，避免调用有副作用的 getter（如 LevelController.SavingPossible
+                    // 内部会调用 Unity FindObjectOfType，在后台线程触发原生层崩溃）。
+                    if (!IsSafeToRead(prop)) continue;
                     try
                     {
                         var val = prop.GetValue(controller, null);
@@ -267,18 +270,22 @@ namespace RailRouteAssistant
         }
 
         /// <summary>
-        /// 深度扫描对象的所有字符串属性，找含中文的地图名候选。
-        /// 递归最多2层，避免性能问题。
+        /// 深度扫描对象的字符串属性，找含中文的地图名候选。
+        /// 仅读取字符串属性；对引用类型属性最多再递归 1 层。所有属性在调用 getter
+        /// 前都先经 <see cref="IsSafeToRead"/> 过滤，避免触发有副作用的 getter
+        /// （如 <c>LevelController.SavingPossible</c> 内部调用 Unity
+        /// <c>FindObjectOfType</c>，在后台线程会触发原生层崩溃）。
         /// </summary>
         private static string ScanDeepStrings(object obj, BindingFlags bf, int depth)
         {
-            if (obj == null || depth > 2) return null;
+            if (obj == null || depth > 1) return null;
             try
             {
                 var type = obj.GetType();
                 foreach (var prop in type.GetProperties(bf))
                 {
                     if (prop.GetMethod == null) continue;
+                    if (!IsSafeToRead(prop)) continue;
                     try
                     {
                         var val = prop.GetValue(obj, null);
@@ -294,7 +301,7 @@ namespace RailRouteAssistant
                                 return s;
                             }
                         }
-                        else if (depth < 2 && !prop.PropertyType.IsPrimitive && !prop.PropertyType.IsEnum)
+                        else
                         {
                             var sub = ScanDeepStrings(val, bf, depth + 1);
                             if (!string.IsNullOrEmpty(sub)) return sub;
@@ -305,6 +312,42 @@ namespace RailRouteAssistant
                 return null;
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// 判断属性的 getter 是否可以安全调用。后台线程不能调用任何会触发 Unity
+        /// 原生 API 的 getter（如 <c>SavingPossible</c>、<c>IsXxx</c>），否则会
+        /// 在 UnityPlayer 原生层崩溃，托管 try-catch 无法捕获。
+        /// 规则：只读取字符串属性或可安全递归的引用类型属性；布尔/数值等状态属性
+        /// 一律跳过；名称以 Is/Has/Can/Get 开头或含 Possible/Enabled/Ready/Valid/
+        /// Saving/Loaded/Count/Length 的属性一律跳过。
+        /// </summary>
+        private static bool IsSafeToRead(PropertyInfo prop)
+        {
+            var t = prop.PropertyType;
+            if (t == typeof(string)) return IsSafeName(prop.Name);
+            // 值类型（含 bool/枚举/结构体）getter 经常有副作用或调用 Unity API，跳过。
+            if (t.IsValueType) return false;
+            if (!t.IsClass) return false;
+            return IsSafeName(prop.Name);
+        }
+
+        private static bool IsSafeName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            if (name.StartsWith("Is", StringComparison.Ordinal) ||
+                name.StartsWith("Has", StringComparison.Ordinal) ||
+                name.StartsWith("Can", StringComparison.Ordinal) ||
+                name.StartsWith("Get", StringComparison.Ordinal)) return false;
+            if (name.IndexOf("Possible", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Enabled", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Ready", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Valid", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Saving", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Loaded", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Count", StringComparison.Ordinal) >= 0) return false;
+            if (name.IndexOf("Length", StringComparison.Ordinal) >= 0) return false;
+            return true;
         }
 
         private static bool NameOrTypeMatchesKeyword(PropertyInfo prop)

@@ -1,6 +1,6 @@
 # 项目进度
 
-更新时间：2026-07-29（调度助手迭代）
+更新时间：2026-08-08（调度助手迭代）
 
 ## 第一阶段：基础设施
 
@@ -161,6 +161,9 @@
 - [x] 调向状态：读取游戏原生 `StopAndReverse`/`ReverseOnceStopped`，停站时显示“需调向”并语音提示
 - [x] 站台冲突检测排除方向站（站名含"方向"），只有中间停车站才报冲突
 - [x] HTTP API 暴露 `nextPrepareSec`/`nextArrivalSec` 字段
+- [x] 修复后台线程 `MapNameReader` 反射扫描触发原生层崩溃：深度扫描在调用属性
+      getter 前先按类型/名称过滤，跳过 `SavingPossible` 等会调用 Unity
+      `FindObjectOfType` 的有副作用 getter；递归深度由 2 降为 1（v2.6.10）
 
 ### 已移除
 
