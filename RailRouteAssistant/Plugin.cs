@@ -17,7 +17,7 @@ namespace RailRouteAssistant
     {
         public const string PluginGuid = "com.railroute.assistant";
         public const string PluginName = "Rail Route Assistant";
-        public const string PluginVersion = "2.6.7";
+        public const string PluginVersion = "2.6.8";
 
         internal static ManualLogSource Log;
 

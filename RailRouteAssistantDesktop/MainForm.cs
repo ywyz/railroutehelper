@@ -28,8 +28,13 @@ namespace RailRouteAssistantDesktop
         private List<TrainData> _trains = new();
         private bool _gameReady = false;
         private string _gameTime = "";                  // 游戏内模拟时钟 HH:MM:SS
+        private double _gameTimeSec = -1;               // 游戏内模拟时钟（秒），用于预计到达时间计算
         private bool _openingTrainDetails;
         private readonly HashSet<string> _selectedTrainNames = new();  // refresh 间保留的选中车号
+
+        // 用户点击列头排序：_sortColumn=-1 表示默认排序（按状态优先级）
+        private int _sortColumn = -1;
+        private SortOrder _sortOrder = SortOrder.None;
 
         // ===== 语音播报 =====
         private VoiceEngine _voice;
@@ -193,6 +198,7 @@ namespace RailRouteAssistantDesktop
             _trainList.Columns.Add("当前停站", 110);
             _trainList.Columns.Add("前方停站", 90);
             _trainList.Columns.Add("站台", 40);
+            _trainList.Columns.Add("到达", 55);
 
             var alertHeader = new Label
             {
@@ -258,6 +264,17 @@ namespace RailRouteAssistantDesktop
             copyAllItem.Click += (s, e) => CopyAllToClipboard();
             copyMenu.Items.Add(copyAllItem);
 
+            copyMenu.Items.Add(new ToolStripSeparator());
+            var resetSortItem = new ToolStripMenuItem("恢复默认排序");
+            resetSortItem.Click += (s, e) =>
+            {
+                _sortColumn = -1;
+                _sortOrder = SortOrder.None;
+                UpdateColumnHeaders();
+                RefreshTrainList();
+            };
+            copyMenu.Items.Add(resetSortItem);
+
             _trainList.ContextMenuStrip = copyMenu;
             _alertList.ContextMenuStrip = copyMenu;
 
@@ -314,6 +331,30 @@ namespace RailRouteAssistantDesktop
 
             // ItemActivate 同时覆盖鼠标双击和选中行后按回车，比坐标命中判断更可靠。
             _trainList.ItemActivate += (s, e) => ShowSelectedTrainDetails();
+
+            // 点击列头排序：第一次点击升序，再次点击切换降序，第三次恢复默认排序
+            _trainList.ColumnClick += (s, e) =>
+            {
+                if (_sortColumn == e.Column)
+                {
+                    // 同一列：升序 -> 降序 -> 默认
+                    if (_sortOrder == SortOrder.Ascending)
+                        _sortOrder = SortOrder.Descending;
+                    else
+                    {
+                        // 降序 -> 恢复默认
+                        _sortColumn = -1;
+                        _sortOrder = SortOrder.None;
+                    }
+                }
+                else
+                {
+                    _sortColumn = e.Column;
+                    _sortOrder = SortOrder.Ascending;
+                }
+                UpdateColumnHeaders();
+                RefreshTrainList();
+            };
 
             // 失去焦点时恢复置顶（避免被游戏窗口盖住）
             Deactivate += (s, e) =>
@@ -581,9 +622,15 @@ namespace RailRouteAssistantDesktop
 
                 // 游戏内时间
                 if (root.TryGetProperty("gameTime", out var gtEl) && gtEl.ValueKind == JsonValueKind.String)
+                {
                     _gameTime = gtEl.GetString() ?? "";
+                    _gameTimeSec = ParseGameTimeToSeconds(_gameTime);
+                }
                 else
+                {
                     _gameTime = "";
+                    _gameTimeSec = -1;
+                }
 
                 _alerts.Clear();
                 if (root.TryGetProperty("alerts", out var alertsEl))
@@ -752,9 +799,19 @@ namespace RailRouteAssistantDesktop
 
         /// <summary>
         /// 列车完整排序比较：先按 TrainSortPriority 分组，停站组内按剩余发车时间升序。
+        /// 用户点击列头时按指定列排序（_sortColumn >= 0）。
         /// </summary>
-        private static int CompareTrains(TrainData a, TrainData b)
+        private int CompareTrains(TrainData a, TrainData b)
         {
+            // 用户点击列头排序
+            if (_sortColumn >= 0 && _sortOrder != SortOrder.None)
+            {
+                int cmp = CompareByColumn(a, b, _sortColumn);
+                if (_sortOrder == SortOrder.Descending) cmp = -cmp;
+                return cmp;
+            }
+
+            // 默认排序：按状态优先级分组
             int pa = TrainSortPriority(a);
             int pb = TrainSortPriority(b);
             if (pa != pb) return pa.CompareTo(pb);
@@ -767,6 +824,49 @@ namespace RailRouteAssistantDesktop
             }
             // 其他组按车号稳定排序
             return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>按指定列比较两趟列车，返回升序比较结果。</summary>
+        private int CompareByColumn(TrainData a, TrainData b, int col)
+        {
+            switch (col)
+            {
+                case 0: return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                case 1: // 始发
+                    _trainInfo.TryLookup(a.Name, out var ia); _trainInfo.TryLookup(b.Name, out var ib);
+                    return string.Compare(ia?.Origin ?? "", ib?.Origin ?? "", StringComparison.OrdinalIgnoreCase);
+                case 2: // 终到
+                    _trainInfo.TryLookup(a.Name, out var ia2); _trainInfo.TryLookup(b.Name, out var ib2);
+                    return string.Compare(ia2?.Destination ?? "", ib2?.Destination ?? "", StringComparison.OrdinalIgnoreCase);
+                case 3: return a.Speed.CompareTo(b.Speed);
+                case 4: return a.Delay.CompareTo(b.Delay);
+                case 5: // 信号
+                    return a.SignalAllocationState.CompareTo(b.SignalAllocationState);
+                case 6: // 状态（按优先级）
+                    return TrainSortPriority(a).CompareTo(TrainSortPriority(b));
+                case 7: // 当前停站
+                    return string.Compare(a.CurrentStation ?? a.LastVisitStation ?? "", b.CurrentStation ?? b.LastVisitStation ?? "", StringComparison.OrdinalIgnoreCase);
+                case 8: // 前方停站
+                    return string.Compare(a.NextStation ?? "", b.NextStation ?? "", StringComparison.OrdinalIgnoreCase);
+                case 9: // 站台
+                    return a.Platform.CompareTo(b.Platform);
+                case 10: // 到达
+                    return (a.NextArrivalSec ?? double.MaxValue).CompareTo(b.NextArrivalSec ?? double.MaxValue);
+                default: return 0;
+            }
+        }
+
+        /// <summary>把 "HH:MM:SS" 格式的游戏时间解析为总秒数。失败返回 -1。</summary>
+        private static double ParseGameTimeToSeconds(string timeStr)
+        {
+            if (string.IsNullOrEmpty(timeStr)) return -1;
+            var parts = timeStr.Split(':');
+            if (parts.Length != 3) return -1;
+            if (int.TryParse(parts[0], out int h) &&
+                int.TryParse(parts[1], out int m) &&
+                int.TryParse(parts[2], out int s))
+                return h * 3600 + m * 60 + s;
+            return -1;
         }
 
         private void UpdateUI()
@@ -820,6 +920,21 @@ namespace RailRouteAssistantDesktop
             _alertList.EndUpdate();
 
             RefreshTrainList();
+        }
+
+        /// <summary>更新列头排序箭头显示。</summary>
+        private void UpdateColumnHeaders()
+        {
+            for (int i = 0; i < _trainList.Columns.Count; i++)
+            {
+                var col = _trainList.Columns[i];
+                // 去掉旧的箭头符号
+                var baseText = col.Text.TrimEnd('▲', '▼', ' ').Trim();
+                if (i == _sortColumn && _sortOrder != SortOrder.None)
+                    col.Text = baseText + (_sortOrder == SortOrder.Ascending ? " ▲" : " ▼");
+                else
+                    col.Text = baseText;
+            }
         }
 
         /// <summary>按搜索框筛选并重建列车列表，同时保留仍可见的选中车号和滚动位置。</summary>
@@ -888,6 +1003,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems.Add(""); // 当前停站
             item.SubItems.Add(""); // 前方停站
             item.SubItems.Add(""); // 站台
+            item.SubItems.Add(""); // 到达
             UpdateTrainItem(item, t);
             return item;
         }
@@ -1495,6 +1611,23 @@ namespace RailRouteAssistantDesktop
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
+            // 预计到达时间：游戏当前时钟 + 距到达剩余秒数
+            string arrivalStr = "";
+            if (isRunning && t.NextArrivalSec.HasValue && t.NextArrivalSec.Value > 0 && _gameTimeSec >= 0)
+            {
+                var etaSec = _gameTimeSec + t.NextArrivalSec.Value;
+                // 游戏内时间可能超过 24 小时，取模显示
+                var ts = TimeSpan.FromSeconds(etaSec % 86400);
+                arrivalStr = $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}";
+            }
+            else if (isStationStop && t.DepartureRemainingSec.HasValue && t.DepartureRemainingSec.Value > 0 && _gameTimeSec >= 0)
+            {
+                // 停站时显示预计发车时间
+                var etdSec = _gameTimeSec + t.DepartureRemainingSec.Value;
+                var ts = TimeSpan.FromSeconds(etdSec % 86400);
+                arrivalStr = $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}";
+            }
+
             // 始发/终到：复合车次已选出当前运行段；0 前缀只在查询层移除。
             var originStr = "";
             var destStr = "";
@@ -1514,6 +1647,7 @@ namespace RailRouteAssistantDesktop
             item.SubItems[7].Text = currentStopStr;
             item.SubItems[8].Text = stationStr;
             item.SubItems[9].Text = platformStr;
+            item.SubItems[10].Text = arrivalStr;
 
             // 颜色
             item.BackColor = GetTrainBackColor(t.Name);

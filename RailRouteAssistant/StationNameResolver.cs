@@ -21,8 +21,16 @@ namespace RailRouteAssistant
         private static bool _configLoaded;
         // 地图名包含片段 -> 母站名（按当前地图名匹配，匹配到则对全图“XX场”子站点前置母站名）
         private static readonly List<KeyValuePair<string, string>> _mapRules = new();
-        // 子站点名 -> 完整名（直接映射，无视地图名；地图名检测失败时使用）
+        // 子站点名 -> 完整名（用户配置的直接映射，优先级最高，覆盖一切）
         private static readonly Dictionary<string, string> _directMappings = new(StringComparer.Ordinal);
+        // 内置直接映射兜底（地图名读取失败时使用；仅对已知子站点名生效）
+        private static readonly Dictionary<string, string> _builtinDirectMappings = new(StringComparer.Ordinal)
+        {
+            { "京广场", "郑州东站京广场" },
+            { "城际场", "郑州东站城际场" },
+            { "徐兰场上行", "郑州东站徐兰场上行" },
+            { "徐兰场下行", "郑州东站徐兰场下行" },
+        };
 
         public static string CurrentMapName => _mapName;
         public static string ActiveParent => _activeParent;
@@ -53,14 +61,18 @@ namespace RailRouteAssistant
             Plugin.Log.LogInfo($"[StationResolver] 地图 '{mapName}' 未匹配任何母站规则，子站点保持原名");
         }
 
-        /// <summary>解析站名：直接映射优先，其次按母站+子站点拼接，否则原样返回。</summary>
+        /// <summary>解析站名：用户直接映射优先，其次母站+子站点，最后内置直接映射兜底。</summary>
         public static string Resolve(string stationName)
         {
             if (string.IsNullOrEmpty(stationName)) return stationName;
             EnsureConfigLoaded();
+            // 1. 用户配置的直接映射（优先级最高，覆盖一切）
             if (_directMappings.TryGetValue(stationName, out var full)) return full;
+            // 2. 地图名匹配到的母站 + 子站点
             if (!string.IsNullOrEmpty(_activeParent) && IsSubYard(stationName))
                 return _activeParent + stationName;
+            // 3. 内置直接映射兜底（地图名读取失败时使用）
+            if (_builtinDirectMappings.TryGetValue(stationName, out var builtin)) return builtin;
             return stationName;
         }
 
@@ -241,6 +253,52 @@ namespace RailRouteAssistant
                         if (val == null) continue;
                         var name = FindNameString(val, bf);
                         if (LooksLikeMapName(name)) return name;
+
+                        // 深度扫描：LevelController 等对象的 Name 属性可能返回 Unity 场景名，
+                        // 真正的地图名可能在其子属性中。递归扫描找含中文的字符串。
+                        var deep = ScanDeepStrings(val, bf, depth: 0);
+                        if (LooksLikeMapName(deep)) return deep;
+                    }
+                    catch { }
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// 深度扫描对象的所有字符串属性，找含中文的地图名候选。
+        /// 递归最多2层，避免性能问题。
+        /// </summary>
+        private static string ScanDeepStrings(object obj, BindingFlags bf, int depth)
+        {
+            if (obj == null || depth > 2) return null;
+            try
+            {
+                var type = obj.GetType();
+                foreach (var prop in type.GetProperties(bf))
+                {
+                    if (prop.GetMethod == null) continue;
+                    try
+                    {
+                        var val = prop.GetValue(obj, null);
+                        if (val == null) continue;
+
+                        if (prop.PropertyType == typeof(string))
+                        {
+                            var s = val as string;
+                            if (string.IsNullOrEmpty(s) || IsUnitySceneName(s)) continue;
+                            if (ContainsChinese(s))
+                            {
+                                Plugin.Log.LogInfo($"[MapName] 深度扫描命中: '{s}'");
+                                return s;
+                            }
+                        }
+                        else if (depth < 2 && !prop.PropertyType.IsPrimitive && !prop.PropertyType.IsEnum)
+                        {
+                            var sub = ScanDeepStrings(val, bf, depth + 1);
+                            if (!string.IsNullOrEmpty(sub)) return sub;
+                        }
                     }
                     catch { }
                 }
@@ -287,10 +345,41 @@ namespace RailRouteAssistant
         private static bool LooksLikeMapName(string s)
         {
             if (string.IsNullOrEmpty(s)) return false;
-            // 纯英文控制器名等不太可能是地图名；含中文或含较长字符即认为可用。
+            if (IsUnitySceneName(s)) return false;
+            // 含中文 → 可能是地图名
             foreach (char c in s)
                 if (c >= '\u3400' && c <= '\u9fff') return true;
-            return s.Length >= 4;
+            // 纯英文：要求较长，排除短控制器名
+            return s.Length >= 8;
+        }
+
+        /// <summary>常见 Unity 场景名，不是游戏地图名。</summary>
+        private static bool IsUnitySceneName(string s)
+        {
+            switch (s)
+            {
+                case "Bootstrap":
+                case "Main":
+                case "Demo":
+                case "Init":
+                case "Loading":
+                case "Menu":
+                case "Title":
+                case "Intro":
+                case "Empty":
+                case "Persistent":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool ContainsChinese(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            foreach (char c in s)
+                if (c >= '\u3400' && c <= '\u9fff') return true;
+            return false;
         }
 
         private static string TryGetUnitySceneName()
