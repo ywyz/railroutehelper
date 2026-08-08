@@ -30,6 +30,9 @@ namespace RailRouteAssistant
             { "城际场", "郑州东站城际场" },
             { "徐兰场上行", "郑州东站徐兰场上行" },
             { "徐兰场下行", "郑州东站徐兰场下行" },
+            { "京沪场", "南京南站京沪场" },
+            { "宁合宁杭场", "南京南站宁合宁杭场" },
+            { "宁安宁仙场", "南京南站宁安宁仙场" },
         };
 
         public static string CurrentMapName => _mapName;
@@ -73,6 +76,13 @@ namespace RailRouteAssistant
                 return _activeParent + stationName;
             // 3. 内置直接映射兜底（地图名读取失败时使用）
             if (_builtinDirectMappings.TryGetValue(stationName, out var builtin)) return builtin;
+            // 新版地图常把内部英文名和中文名拼在同一字段，如
+            // "Yard for ... 京广场"。地图名读取失败时也要按中文后缀命中兜底。
+            foreach (var mapping in _builtinDirectMappings)
+            {
+                if (stationName.EndsWith(mapping.Key, StringComparison.Ordinal))
+                    return mapping.Value;
+            }
             return stationName;
         }
 

@@ -726,7 +726,7 @@ namespace RailRouteAssistantDesktop
                 // 语音播报：状态变化检测（用原始车号追踪，拆分前调用）
                 DetectAndAnnounce();
 
-                // 复合车次只显示当前运行段；到达首个计划停车站后切换到第二段车号。
+                // 复合车次只显示当前运行段；按 12306 终点和逐站车号切换。
                 _trains = ResolveActiveCompositeTrainCodes(_trains);
 
                 UpdateUI();
@@ -1024,10 +1024,12 @@ namespace RailRouteAssistantDesktop
 
             string origin = "未知";
             string destination = "未知";
+            TrainInfoSource? routeSource = null;
             if (_trainInfo.TryLookup(train.Name, out var info))
             {
                 origin = StripEnglishPrefix(info.Origin);
                 destination = StripEnglishPrefix(info.Destination);
+                routeSource = info.Source;
             }
             else
             {
@@ -1046,6 +1048,7 @@ namespace RailRouteAssistantDesktop
                     origin = StripEnglishPrefix(onlineDetails.Stops[0].StationName);
                     destination = StripEnglishPrefix(
                         onlineDetails.Stops[onlineDetails.Stops.Count - 1].StationName);
+                    routeSource = TrainInfoSource.Online;
                 }
             }
             finally
@@ -1060,6 +1063,7 @@ namespace RailRouteAssistantDesktop
                 train.Name,
                 origin,
                 destination,
+                routeSource,
                 train.ScheduledStops,
                 onlineDetails,
                 train.MapEntryTimeSec,
@@ -1076,16 +1080,15 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>
-        /// 尝试拆分复合车号。支持相邻编号和斜杠形式，例如
-        /// G4545G4546、DJ8598G3401、0G1703/G1704、0Y2/Y1。
+        /// 拆分任意段数的复合车号。
         /// </summary>
-        private static bool TrySplitMergedTrainNumber(string name, out string part1, out string part2)
+        private static IReadOnlyList<string> SplitMergedTrainNumbers(string name)
         {
-            return TrainCodeRules.TrySplitCompositeCode(name, out part1, out part2);
+            return TrainCodeRules.SplitCompositeCodes(name);
         }
 
         /// <summary>
-        /// 预热当前地图上所有车号。合并车号会分别查询两段，保证列表和播报都能尽早拿到
+        /// 预热当前地图上所有车号。合并车号会分别查询各段，保证列表和播报都能尽早拿到
         /// 始发终到；服务内部会去重、限流并在失败时立即让离线表接管。
         /// </summary>
         private void PreloadTrainInfo()
@@ -1096,14 +1099,18 @@ namespace RailRouteAssistantDesktop
             {
                 if (string.IsNullOrWhiteSpace(train.Name) || train.Name == "?") continue;
 
-                if (TrySplitMergedTrainNumber(train.Name, out var part1, out var part2))
+                var parts = SplitMergedTrainNumbers(train.Name);
+                foreach (string part in parts)
                 {
-                    _ = _trainInfo.EnsureResolvedAsync(part1);
-                    _ = _trainInfo.EnsureResolvedAsync(part2);
+                    _ = _trainInfo.EnsureResolvedAsync(part);
                 }
-                else
+
+                // 逐站车号只有详情接口提供。只为当前运行或即将入图的复合车次预取，
+                // 避免全天地图数百趟未运行列车同时排队请求详情。
+                if (parts.Count > 1 && (train.OnBoard || train.Waiting))
                 {
-                    _ = _trainInfo.EnsureResolvedAsync(train.Name);
+                    foreach (string part in parts)
+                        _ = _trainInfo.EnsureOnlineDetailsAsync(part);
                 }
             }
         }
@@ -1158,7 +1165,7 @@ namespace RailRouteAssistantDesktop
                 // 仅在已有上一帧状态时判断状态变化（避免启动时全员播报）
                 if (hadPrev)
                 {
-                    // 复合车次在首个计划停车站前使用第一段，到站后切换为第二段。
+                    // 复合车次按各段终点和 12306 逐站车号选择当前播报车号。
                     string announceCode = GetActiveTrainCode(t);
                     string dest = LookupDestination(announceCode);
 
@@ -1417,7 +1424,7 @@ namespace RailRouteAssistantDesktop
         }
 
         /// <summary>
-        /// 复合车次仅保留一行：首个计划停车站前显示第一段，到站及之后显示第二段。
+        /// 复合车次仅保留一行：按各段终点及 12306 逐站车号显示当前运行车号。
         /// 原始对象仍在状态检测阶段使用，避免车号切换破坏连续状态追踪。
         /// </summary>
         private List<TrainData> ResolveActiveCompositeTrainCodes(List<TrainData> trains)
@@ -1440,21 +1447,83 @@ namespace RailRouteAssistantDesktop
             return result;
         }
 
-        private static string GetActiveTrainCode(TrainData train)
+        private string GetActiveTrainCode(TrainData train)
         {
             if (train == null) return null;
-            bool secondLegActive = IsStationStop(train) ||
-                (train.ActualVisitCount > 0 && !train.LastVisitNonStop);
-            if (!secondLegActive && train.ScheduledVisitIndex >= 0 && train.ScheduledStops.Count > 0)
+
+            IReadOnlyList<string> parts = SplitMergedTrainNumbers(train.Name);
+            if (parts.Count == 0) return train.Name;
+
+            int activeLeg = 0;
+            int reachedIndex = train.ActualVisitCount > 0
+                ? Math.Min(Math.Max(train.ScheduledVisitIndex, 0), train.ScheduledStops.Count - 1)
+                : -1;
+            int searchFrom = 0;
+
+            // 每段到达其 12306 终点后立即进入下一段。在线结果优先，接口暂不可用时
+            // 路路通和历史表仍可提供换号站，且按地图访问顺序处理重复站名。
+            for (int leg = 0; leg < parts.Count - 1; leg++)
             {
-                // 程序在换号站之后才启动时，最近一次访问可能已经变成后续通过站。
-                // 回看已完成的计划访问，只要其中存在有停车时长的站点，就保持第二段车号。
-                int lastVisitedIndex = Math.Min(train.ScheduledVisitIndex, train.ScheduledStops.Count - 1);
-                secondLegActive = train.ScheduledStops
-                    .Take(lastVisitedIndex + 1)
-                    .Any(stop => stop.StopMinutes > 0);
+                if (!_trainInfo.TryLookup(parts[leg], out var route) ||
+                    string.IsNullOrWhiteSpace(route.Destination))
+                    break;
+
+                int boundary = FindScheduledStationIndex(
+                    train.ScheduledStops, route.Destination, searchFrom);
+                if (boundary < 0) break;
+                if (reachedIndex < boundary) break;
+
+                activeLeg = leg + 1;
+                searchFrom = boundary;
             }
-            return TrainCodeRules.SelectActiveCode(train.Name, secondLegActive);
+
+            string activeCode = parts[activeLeg];
+
+            // 同一 12306 运行段中还可能在中途换号，例如 G1792 到达芜湖后变为
+            // G1789。只在实际访问已经发生后使用该站的 stationTrainCode。
+            if (train.ActualVisitCount > 0 &&
+                !string.IsNullOrWhiteSpace(train.LastVisitStation) &&
+                _trainInfo.TryGetOnlineDetails(activeCode, out var details))
+            {
+                OnlineTrainStop reachedStop = details.Stops.LastOrDefault(stop =>
+                    StationNamesMatch(train.LastVisitStation, stop.StationName));
+                if (!string.IsNullOrWhiteSpace(reachedStop?.StationTrainCode))
+                    activeCode = reachedStop.StationTrainCode;
+            }
+
+            return activeCode;
+        }
+
+        private static int FindScheduledStationIndex(
+            IReadOnlyList<ScheduledStopData> stops,
+            string station,
+            int startIndex)
+        {
+            for (int index = Math.Max(0, startIndex); index < stops.Count; index++)
+            {
+                if (StationNamesMatch(stops[index].Station, station)) return index;
+            }
+            return -1;
+        }
+
+        private static bool StationNamesMatch(string gameStation, string railwayStation)
+        {
+            string game = NormalizeStationForMatch(gameStation);
+            string railway = NormalizeStationForMatch(railwayStation);
+            if (game.Length == 0 || railway.Length == 0) return false;
+            if (string.Equals(game, railway, StringComparison.Ordinal)) return true;
+
+            // 大站在地图中可能细分为“郑州东站京广场”等子场。
+            return game.StartsWith(railway + "站", StringComparison.Ordinal);
+        }
+
+        private static string NormalizeStationForMatch(string station)
+        {
+            string normalized = StationNameFormatter.ChineseOrOriginal(station)?.Trim() ?? "";
+            normalized = normalized.Replace(" ", "", StringComparison.Ordinal);
+            return normalized.EndsWith("站", StringComparison.Ordinal)
+                ? normalized.Substring(0, normalized.Length - 1)
+                : normalized;
         }
 
         private static TrainData CloneTrain(TrainData t)

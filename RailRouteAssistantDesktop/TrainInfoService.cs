@@ -48,6 +48,7 @@ namespace RailRouteAssistantDesktop
         public string DepartureTime { get; }
         public string StopoverMinutes { get; }
         public int DayDifference { get; }
+        public string StationTrainCode { get; }
 
         public OnlineTrainStop(
             string stationNumber,
@@ -55,7 +56,8 @@ namespace RailRouteAssistantDesktop
             string arrivalTime,
             string departureTime,
             string stopoverMinutes,
-            int dayDifference)
+            int dayDifference,
+            string stationTrainCode)
         {
             StationNumber = stationNumber;
             StationName = stationName;
@@ -63,6 +65,7 @@ namespace RailRouteAssistantDesktop
             DepartureTime = departureTime;
             StopoverMinutes = stopoverMinutes;
             DayDifference = dayDifference;
+            StationTrainCode = stationTrainCode;
         }
     }
 
@@ -120,6 +123,8 @@ namespace RailRouteAssistantDesktop
         private readonly ConcurrentDictionary<string, Lazy<Task<OnlineTrainDetails>>> _detailsInFlight =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAfterUtc =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, DateTimeOffset> _detailsRetryAfterUtc =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _requestGate = new(MaxConcurrentRequests, MaxConcurrentRequests);
         // 详情查询由用户点击触发，不能排在数百个列表预加载请求之后。
@@ -242,6 +247,37 @@ namespace RailRouteAssistantDesktop
             return work.Value;
         }
 
+        /// <summary>
+        /// 后台预取详情。失败后短期退避，避免桌面端每秒刷新时反复请求；用户主动打开
+        /// 详情仍通过 <see cref="GetOnlineDetailsAsync"/> 立即重试。
+        /// </summary>
+        public async Task EnsureOnlineDetailsAsync(string code)
+        {
+            code = NormalizeCode(code);
+            if (string.IsNullOrEmpty(code)) return;
+            if (_detailsRetryAfterUtc.TryGetValue(code, out var retryAfter) &&
+                retryAfter > DateTimeOffset.UtcNow)
+                return;
+
+            OnlineTrainDetails details = await GetOnlineDetailsAsync(code).ConfigureAwait(false);
+            if (details == null)
+                _detailsRetryAfterUtc[code] = DateTimeOffset.UtcNow.Add(RetryDelay);
+            else
+                _detailsRetryAfterUtc.TryRemove(code, out _);
+        }
+
+        /// <summary>读取已经成功取得的当日详情，不发起网络请求。</summary>
+        public bool TryGetOnlineDetails(string code, out OnlineTrainDetails details)
+        {
+            details = null;
+            code = NormalizeCode(code);
+            if (string.IsNullOrEmpty(code) || !_onlineDetails.TryGetValue(code, out var cached) ||
+                !string.Equals(cached.ServiceDate, GetServiceDate(), StringComparison.Ordinal))
+                return false;
+            details = cached;
+            return true;
+        }
+
         private async Task<OnlineTrainDetails> ResolveOnlineDetailsAsync(string code, string serviceDate)
         {
             try
@@ -253,8 +289,16 @@ namespace RailRouteAssistantDesktop
                         string.Equals(cached.ServiceDate, serviceDate, StringComparison.Ordinal))
                         return cached;
 
-                    var details = await QueryOnlineDetailsAsync(code, serviceDate, _shutdown.Token)
-                        .ConfigureAwait(false);
+                    OnlineTrainDetails details = null;
+                    // 详情接口偶尔会返回空体或短暂失败。用户主动打开详情及运行中复合
+                    // 车号解析都值得做一次短重试，但不把确定的空计划长期缓存。
+                    for (int attempt = 0; attempt < 2 && details == null; attempt++)
+                    {
+                        details = await QueryOnlineDetailsAsync(code, serviceDate, _shutdown.Token)
+                            .ConfigureAwait(false);
+                        if (details == null && attempt == 0)
+                            await Task.Delay(350, _shutdown.Token).ConfigureAwait(false);
+                    }
                     if (details == null) return null;
 
                     _onlineDetails[code] = details;
@@ -351,7 +395,9 @@ namespace RailRouteAssistantDesktop
                     ReadString(item, "arriveTime") ?? ReadString(item, "arrive_time"),
                     ReadString(item, "startTime") ?? ReadString(item, "start_time"),
                     ReadString(item, "stopover_time"),
-                    ReadInt(item, "dayDifference")));
+                    ReadInt(item, "dayDifference"),
+                    ReadString(item, "stationTrainCode") ??
+                        ReadString(item, "station_train_code")));
 
                 // train_style 常见形态为 CRH380D_554H，尾段是具体车组号；
                 // jiaolu_train_style 则通常直接是 CRH2C2、25K 等交路车型。

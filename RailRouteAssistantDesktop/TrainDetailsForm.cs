@@ -17,6 +17,7 @@ namespace RailRouteAssistantDesktop
             string trainCode,
             string origin,
             string destination,
+            TrainInfoSource? routeSource,
             IReadOnlyList<ScheduledStopData> stops,
             OnlineTrainDetails onlineDetails,
             double? mapEntryTimeSec,
@@ -59,7 +60,8 @@ namespace RailRouteAssistantDesktop
             {
                 Dock = DockStyle.Top,
                 Height = 28,
-                Text = $"始发站：{DisplayText(origin)}    →    终点站：{DisplayText(destination)}",
+                Text = $"始发站：{DisplayText(origin)}    →    终点站：{DisplayText(destination)}    " +
+                    $"[{FormatRouteSource(routeSource)}]",
                 ForeColor = Color.White,
                 Font = new Font("Microsoft YaHei UI", 10F),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -189,7 +191,11 @@ namespace RailRouteAssistantDesktop
                 }
                 else
                 {
-                    note.Text = "12306 暂未返回该车次当日的全程时刻表。";
+                    note.Text = routeSource == TrainInfoSource.Legacy12306
+                        ? "始发终到来自 2022 年冻结快照；12306 当前未返回该车次当日计划。"
+                        : routeSource == TrainInfoSource.Offline
+                            ? "始发终到来自路路通离线表；12306 当前未返回该车次当日计划。"
+                            : "12306 当前未返回该车次当日计划，或本次请求暂时失败。";
                     note.ForeColor = Color.Orange;
                 }
             }
@@ -374,6 +380,17 @@ namespace RailRouteAssistantDesktop
             return stop.NonStop && !station.EndsWith("（通过）", StringComparison.Ordinal)
                 ? station + "（通过）"
                 : station;
+        }
+
+        private static string FormatRouteSource(TrainInfoSource? source)
+        {
+            return source switch
+            {
+                TrainInfoSource.Online => "12306 当日在线",
+                TrainInfoSource.Offline => "路路通离线",
+                TrainInfoSource.Legacy12306 => "12306 2022 快照",
+                _ => "来源未知"
+            };
         }
 
         private static string FormatMapEndpoint(string station, int platform, bool nonStop)

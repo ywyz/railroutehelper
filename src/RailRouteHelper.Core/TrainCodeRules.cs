@@ -8,11 +8,8 @@ namespace RailRouteHelper.Core;
 /// </summary>
 public static class TrainCodeRules
 {
-    private static readonly Regex CompositeCodePattern = new(
-        @"^((?:0)?[A-Z]{1,2}\d+)([A-Z]{1,2}\d+)$",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex SlashCompositeCodePattern = new(
-        @"^((?:0)?[A-Z]{1,2}\d+)/((?:0)?[A-Z]{1,2}\d+)$",
+    private static readonly Regex TrainCodeTokenPattern = new(
+        @"(?:0)?[A-Z]{1,2}\d+",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
@@ -60,34 +57,57 @@ public static class TrainCodeRules
         return string.IsNullOrEmpty(result) ? null : result;
     }
 
+    /// <summary>拆分地图车号中的所有连续运行段。</summary>
+    /// <remarks>
+    /// 支持相邻、斜杠以及三段以上形式，例如 G6642G6641、0G1703/G1704、
+    /// G3220G3219G1792。无法完整解析时返回只含原车号的一项，避免截断未知编号。
+    /// </remarks>
+    public static IReadOnlyList<string> SplitCompositeCodes(string? code)
+    {
+        string? normalized = NormalizeDisplayCode(code);
+        if (string.IsNullOrEmpty(normalized)) return Array.Empty<string>();
+
+        // 中文括注只说明地图运行要求，不属于车号主体。
+        int annotation = normalized.IndexOfAny(new[] { '(', '（' });
+        string body = annotation >= 0 ? normalized.Substring(0, annotation) : normalized;
+        bool throughPrefix = body.Length > 1 && body[0] == '通';
+        if (throughPrefix) body = body.Substring(1);
+
+        MatchCollection matches = TrainCodeTokenPattern.Matches(body);
+        if (matches.Count == 0) return new[] { normalized };
+
+        // 除车号之间允许的斜杠外，整个主体必须都被正则消费。
+        string consumed = string.Concat(matches.Cast<Match>().Select(match => match.Value));
+        if (!string.Equals(body.Replace("/", "", StringComparison.Ordinal), consumed, StringComparison.Ordinal))
+            return new[] { normalized };
+
+        var result = matches.Cast<Match>().Select(match => match.Value).ToList();
+        if (throughPrefix) result[0] = "通" + result[0];
+
+        // 秦皇岛地图的 Y 字头是地图内游车编号，后续段会省略共同的地图前导 0。
+        if (result[0].StartsWith("0Y", StringComparison.Ordinal))
+        {
+            for (int index = 1; index < result.Count; index++)
+            {
+                if (result[index].StartsWith("Y", StringComparison.Ordinal))
+                    result[index] = "0" + result[index];
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>
-    /// 拆分地图复合车次，例如 G6642G6641、DJ8598G3401、0G1703/G1704、0Y2/Y1。
+    /// 兼容旧调用方的两段拆分接口。三段以上车号请使用 <see cref="SplitCompositeCodes"/>。
     /// </summary>
     public static bool TrySplitCompositeCode(string? code, out string? firstLeg, out string? secondLeg)
     {
         firstLeg = null;
         secondLeg = null;
-        string? normalized = NormalizeDisplayCode(code);
-        if (string.IsNullOrEmpty(normalized)) return false;
-
-        Match slashMatch = SlashCompositeCodePattern.Match(normalized);
-        if (slashMatch.Success)
-        {
-            firstLeg = slashMatch.Groups[1].Value;
-            secondLeg = slashMatch.Groups[2].Value;
-
-            // 秦皇岛地图的 Y 字头是地图内游车编号，斜杠后会省略共同的地图前导 0。
-            // 普通国铁车次（如 0G1703/G1704）不继承这个 0。
-            if (firstLeg.StartsWith("0Y", StringComparison.Ordinal) &&
-                secondLeg.StartsWith("Y", StringComparison.Ordinal))
-                secondLeg = "0" + secondLeg;
-            return true;
-        }
-
-        Match match = CompositeCodePattern.Match(normalized);
-        if (!match.Success) return false;
-        firstLeg = match.Groups[1].Value;
-        secondLeg = match.Groups[2].Value;
+        IReadOnlyList<string> parts = SplitCompositeCodes(code);
+        if (parts.Count != 2) return false;
+        firstLeg = parts[0];
+        secondLeg = parts[1];
         return true;
     }
 
@@ -97,6 +117,15 @@ public static class TrainCodeRules
         return TrySplitCompositeCode(code, out string? firstLeg, out string? secondLeg)
             ? (secondLegActive ? secondLeg : firstLeg)
             : NormalizeDisplayCode(code);
+    }
+
+    /// <summary>按从零开始的运行段序号选择活动车号。</summary>
+    public static string? SelectActiveCode(string? code, int activeLegIndex)
+    {
+        IReadOnlyList<string> parts = SplitCompositeCodes(code);
+        if (parts.Count == 0) return null;
+        int index = Math.Clamp(activeLegIndex, 0, parts.Count - 1);
+        return parts[index];
     }
 
     private static string? NormalizeDisplayCode(string? code)
