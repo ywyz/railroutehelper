@@ -970,10 +970,11 @@ namespace RailRouteAssistant
                 }
 
                 ReadStationVisit(visit, out var station, out var platform, out var nonStop,
-                    out _, out _, out _, out _, out _);
+                    out var stopMinutes, out _, out _, out _, out _);
                 snap.NextStationName = station;
                 snap.NextPlatformNumber = platform;
                 snap.NextStationNonStop = nonStop;
+                snap.NextStationStopDurationMinutes = stopMinutes;
             }
             catch (Exception ex)
             {

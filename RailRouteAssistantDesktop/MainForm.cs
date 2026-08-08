@@ -666,6 +666,7 @@ namespace RailRouteAssistantDesktop
                             Platform = t.GetProperty("platform").GetInt32(),
                             NextStation = t.GetProperty("nextStation").GetString() ?? "",
                             NextStationNonStop = t.TryGetProperty("nextStationNonStop", out var nsn) && nsn.ValueKind is JsonValueKind.True or JsonValueKind.False && nsn.GetBoolean(),
+                            NextStationStopMinutes = t.TryGetProperty("nextStationStopMinutes", out var nssm) && nssm.ValueKind == JsonValueKind.Number ? nssm.GetInt32() : 0,
                             ActualVisitCount = t.TryGetProperty("actualVisitCount", out var avc) && avc.ValueKind == JsonValueKind.Number ? avc.GetInt32() : 0,
                             ScheduledVisitCount = t.TryGetProperty("scheduledVisitCount", out var svc) && svc.ValueKind == JsonValueKind.Number ? svc.GetInt32() : 0,
                             ScheduledVisitIndex = t.TryGetProperty("scheduledVisitIndex", out var svi) && svi.ValueKind == JsonValueKind.Number ? svi.GetInt32() : -1,
@@ -1609,6 +1610,9 @@ namespace RailRouteAssistantDesktop
 
             // 前方停站（仅站名，去掉英文前缀）+ 站台号单独一列
             var stationStr = !string.IsNullOrEmpty(t.NextStation) ? StripEnglishPrefix(t.NextStation) : "";
+            // 运行中显示前方站计划停车分钟数；通过站不停车，不追加
+            if (!t.NextStationNonStop && t.NextStationStopMinutes > 0)
+                stationStr += $" {t.NextStationStopMinutes}分";
             var platformStr = t.Platform > 0 ? $"{t.Platform}台" : "";
 
             // 预计到达时间：游戏当前时钟 + 距到达剩余秒数
@@ -1715,7 +1719,7 @@ namespace RailRouteAssistantDesktop
         public bool HasSignal; public string SignalState;
         public int SignalAllocationState = -1;  // 紧邻下一信号: -1=未知 0=Free 1=Allocated 2=Occupied 3=Shunting
         public int FrontAllocationState = -1;   // 兼容旧 API；不参与信号告警判断
-        public int Platform; public string NextStation; public bool NextStationNonStop;
+        public int Platform; public string NextStation; public bool NextStationNonStop; public int NextStationStopMinutes;
         public int ActualVisitCount; public int ScheduledVisitCount; public int ScheduledVisitIndex = -1;
         public string LastVisitStation; public int LastVisitPlatform; public bool LastVisitNonStop;
         public int LastVisitStopMinutes; public bool LastVisitDeparted;

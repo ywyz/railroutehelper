@@ -135,6 +135,7 @@ namespace RailRouteAssistant
                 sb.Append("\"platform\":").Append(s.NextPlatformNumber).Append(",");
                 sb.Append("\"nextStation\":").Append(JsonStr(s.NextStationName)).Append(",");
                 sb.Append("\"nextStationNonStop\":").Append(s.NextStationNonStop.ToString().ToLower()).Append(",");
+                sb.Append("\"nextStationStopMinutes\":").Append(s.NextStationStopDurationMinutes).Append(",");
                 sb.Append("\"scheduledStops\":[");
                 for (int stopIndex = 0; stopIndex < s.ScheduledStops.Count; stopIndex++)
                 {

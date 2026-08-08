@@ -49,6 +49,7 @@ namespace RailRouteAssistant
         public int NextPlatformNumber;     // 下一站站台号
         public string NextStationName;
         public bool NextStationNonStop;     // 下一次访问是否为通过站
+        public int NextStationStopDurationMinutes;  // 前方站计划停车分钟数（通过站为0）
         public double? NextPrepareTimeTotalSeconds;  // 距发车的剩余秒数（= NextPrepareGameTime - 当前游戏时间）
         public double? NextArrivalTimeTotalSeconds;  // 距到达的剩余秒数（= NextArrivalGameTime - 当前游戏时间）
         internal double? NextPrepareGameTime;        // 原始游戏内绝对时间（TimeSpan.TotalSeconds），采集后换算成剩余
