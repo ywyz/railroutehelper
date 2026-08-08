@@ -366,6 +366,7 @@ namespace RailRouteAssistant
                 if (controllers == null)
                 {
                     LogDiag("Ctx.Deps 为 null（游戏未进入地图）");
+                    StationNameResolver.UpdateMapName(null);
                     DataStore.UpdateSnapshots(new List<TrainSnapshot>(), new List<AlertInfo>(), false);
                     DataStore.UpdateGameTime(null);
                     return;
@@ -374,6 +375,9 @@ namespace RailRouteAssistant
                 // 读取游戏内模拟时钟：Ctx.Deps -> GameControllers -> TimeController -> CurrentTime(TimeSpan)
                 var gameTimeSec = TryGetGameTime(controllers);
                 DataStore.UpdateGameTime(gameTimeSec);
+
+                // 按当前地图名匹配母站，用于把“XX场”子站点补全为“母站+子站点”。
+                StationNameResolver.UpdateMapName(MapNameReader.TryGetMapName(controllers));
 
                 // TrainRepository
                 var trGetter = AccessTools.PropertyGetter(controllers.GetType(), "TrainRepository");
@@ -1204,6 +1208,11 @@ namespace RailRouteAssistant
                     stationName = station.ToString() ?? "";
             }
             catch { }
+
+            // 创意工坊地图可能把一个大站拆成多个“小场”（如京广场），这里按当前地图
+            // 匹配的母站把子站点名补全为“母站+子站点”（如郑州东站京广场）。
+            // 覆盖所有站名字段：下一站、最近访问、当前停站、地图起讫站、计划停车表。
+            stationName = StationNameResolver.Resolve(stationName);
         }
 
         private static double? GetTimeSpanTotalSeconds(object value)

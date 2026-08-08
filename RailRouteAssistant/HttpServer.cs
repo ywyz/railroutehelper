@@ -101,6 +101,8 @@ namespace RailRouteAssistant
             sb.Append("\"lastUpdate\":\"").Append(lastUpdate.ToString("HH:mm:ss")).Append("\",");
             sb.Append("\"serverTime\":\"").Append(DateTime.Now.ToString("HH:mm:ss")).Append("\",");
             sb.Append("\"gameTime\":").Append(gameTimeSec.HasValue ? $"\"{FormatGameTime(gameTimeSec.Value)}\"" : "null").Append(",");
+            sb.Append("\"mapName\":").Append(JsonStr(StationNameResolver.CurrentMapName ?? "")).Append(",");
+            sb.Append("\"mapParentStation\":").Append(JsonStr(StationNameResolver.ActiveParent ?? "")).Append(",");
 
             // 列车列表
             sb.Append("\"trains\":[");

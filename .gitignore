@@ -26,4 +26,5 @@ TestResults/
 artifacts/
 publish/
 .bepinex/
+.bepinex-build/
 bepinex.zip

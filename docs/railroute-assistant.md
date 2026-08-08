@@ -10,6 +10,7 @@ Rail Route 游戏 (Unity 进程)
 │   ├── Harmony 补丁 Train.Move / Semaphore.AfterTrainEntered
 │   │   └── 移动时采集；越过信号时锁定紧邻下一座同向信号
 │   ├── ReflectCache  ← 反射缓存，所有 Type/Property/Field/Method 只查找一次
+│   ├── StationNameResolver  ← 地图名匹配母站，拆分站点合并为“母站+子站点”
 │   ├── 告警引擎 AlertEngine  ← 评估告警规则
 │   └── HTTP 服务器 (localhost:8787)  ← 后台线程提供 JSON 数据
 │
@@ -30,6 +31,37 @@ Rail Route 游戏 (Unity 进程)
 - 下一站信息：站名 + 站台号 + 是否通过
 - 游戏时刻表：完整计划访问序列；通过站标记“（通过）”，到发时刻相同且停车间隔为 0
 - 地图进出信息：列车进入/离开游戏地图的站名、股道、是否通过和计划时刻
+
+### 站点名称合并（拆分站点补全）
+
+部分创意工坊地图（如“郑州东站&京广高铁石家庄至武汉段全天”“南京枢纽”）会把一个
+大站拆成多个“小场”子站点，子站点名里不含母站名：
+
+| 地图 | 母站 | 子站点示例 |
+|---|---|---|
+| 郑州东站&京广高铁石家庄至武汉段全天 | 郑州东站 | 京广场、城际场、徐兰场上行、徐兰场下行 |
+| 南京枢纽 | 南京南站 | 被拆分的小场 |
+
+直接显示“京广场”会脱离真实站名语境。插件在采集时按当前地图名匹配母站，把
+“XX场”类子站点统一合并为“母站+子站点名”（如“郑州东站京广场”），覆盖下一站、
+最近访问、当前停站、地图起讫站和计划停车表所有站名字段。桌面端显示、语音播报
+和告警文本因此完全一致，无需桌面端额外处理。
+
+合并规则：
+
+- 插件启动后通过反射读取当前地图/关卡名（`MapNameReader` 扫描 `IControllers` /
+  `IGameControllers` 上名称含 Level/Map/Scenario 等的属性，再回退到 Unity 活动
+  场景名；检测失败时返回 null）。
+- 地图名匹配内置规则后，全图所有“含‘场’且不含‘站’”或“以‘上行’/‘下行’结尾
+  且不含‘站’”的子站点前置母站名。含“站”的名称（如“南京站高速场”）已被地图作者
+  写成完整名，不再前置母站。
+- 已内置两条规则：地图名含“郑州东站” → 母站“郑州东站”；地图名含“南京枢纽” →
+  母站“南京南站”。
+- 用户可通过配置文件 `%LOCALAPPDATA%\RailRouteAssistant\station_groups.txt` 增加
+  或覆盖规则，每行一条：
+  - `地图名片段|母站名` —— 按地图名匹配，对全图“XX场”子站点前置母站名
+  - `=子站点名|完整名` —— 直接映射，无视地图名（地图名检测失败时的兜底）
+  - 以 `#` 开头或空行忽略；文件不存在时仅使用内置默认规则
 
 ### 车次始发、终到查询
 
@@ -390,6 +422,8 @@ v2.6.4 时安装器会覆盖插件，因此升级完成后需要重启游戏一�
   "lastUpdate": "14:30:25",
   "serverTime": "14:30:25",
   "gameTime": "14:30:25",
+  "mapName": "郑州东站&京广高铁石家庄至武汉段全天",
+  "mapParentStation": "郑州东站",
   "trains": [
     {
       "name": "1228",
@@ -466,6 +500,8 @@ v2.6.4 时安装器会覆盖插件，因此升级完成后需要重启游戏一�
 | `mapExitTimeSec` | number \| null | 列车离开当前游戏地图的计划时刻（游戏内绝对秒数），取自末个 `StationVisit.To`（含通过站） |
 | `mapEntryStation` | string | 列车进入当前游戏地图的站名（取自首个 `StationVisit`，含通过站） |
 | `mapExitStation` | string | 列车离开当前游戏地图的站名（取自末个 `StationVisit`，含通过站），即游戏地图内终点站 |
+| `mapName` | string | 当前游戏地图/关卡名（反射读取，可能为空）；用于站点名称合并的母站匹配 |
+| `mapParentStation` | string | 当前地图匹配到的母站名（如“郑州东站”）；为空表示未匹配规则，子站点保持原名 |
 
 ## 日志
 
@@ -555,6 +591,7 @@ RailRouteAssistant/           # BepInEx 插件 (.NET Framework 4.7.2)
 ├── AlertEngine.cs             # 告警引擎，评估告警规则
 ├── HttpServer.cs              # HTTP 服务器，提供 JSON API
 ├── DataStore.cs               # 数据模型和线程安全存储
+├── StationNameResolver.cs     # 站点名称合并：地图名匹配母站 + 子站点补全 + 配置文件加载
 └── RailRouteAssistant.csproj
 
 RailRouteAssistantDesktop/     # 桌面程序 (.NET 8, WinForms)
