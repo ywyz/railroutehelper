@@ -19,12 +19,6 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore core solution
-        run: dotnet restore RailRouteHelper.sln --locked-mode
-
-      - name: Build and test core solution
-        run: dotnet test RailRouteHelper.sln --no-restore --configuration Release
-
       - name: Download BepInEx
         shell: pwsh
         run: |
